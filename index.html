@@ -426,7 +426,7 @@
 
   .grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 14px;
   }
 
@@ -519,7 +519,8 @@
     color: var(--tile-text);
     font-family: 'Merriweather', Georgia, serif;
     font-weight: 700;
-    font-size: 92px;
+    container-type: inline-size;
+    font-size: min(40cqi, 52px);
     line-height: 1;
     box-shadow:
       inset 0 -4px 0 var(--tile-shadow),
@@ -613,6 +614,85 @@
 
   .dist-section { border-top: 1px solid var(--border); padding-top: 28px; }
 
+  .history-section { border-top: 1px solid var(--border); padding-top: 28px; margin-bottom: 28px; }
+  .history-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-tertiary);
+    margin-bottom: 14px;
+    font-weight: 500;
+  }
+  .history-list { display: flex; flex-direction: column; }
+  .history-entry {
+    display: grid;
+    grid-template-columns: 28px 80px 1fr auto;
+    gap: 14px;
+    align-items: center;
+    padding: 10px 4px;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+  .history-entry:last-child { border-bottom: none; }
+  .history-turn {
+    color: var(--text-tertiary);
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .history-player {
+    color: var(--text-secondary);
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .history-resolved {
+    color: var(--magenta);
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    margin-left: 4px;
+    align-self: center;
+  }
+  .history-action {
+    color: var(--text-secondary);
+    font-style: italic;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+  }
+  .history-score {
+    color: var(--text-primary);
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .history-score .mult {
+    color: var(--magenta);
+    font-weight: 700;
+    margin-left: 4px;
+  }
+
+  /* Compact tile rendering for history rows */
+  .word-letters.compact {
+    align-items: flex-start;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .word-letters.compact .word-letter { cursor: default; }
+  .word-letters.compact .word-letter:hover .letter { color: var(--text-primary); }
+  .word-letters.compact .word-letter .letter { font-size: 18px; }
+  .word-letters.compact .word-mod {
+    font-size: 7px;
+    padding: 1px 3px;
+    margin-top: 1px;
+    letter-spacing: 0.06em;
+    border-radius: 2px;
+  }
+  .word-letters.compact .word-mod-spacer { display: none; }
+
   .dist-label {
     font-size: 11px;
     text-transform: uppercase;
@@ -700,7 +780,6 @@
     .control-players, button.primary { grid-column: 1 / -1; }
     .seg-group { width: 100%; justify-content: center; }
     .seg-btn { flex: 1; }
-    .tile { font-size: 44px; }
     .tile-pts { font-size: 13px; bottom: 5px; right: 8px; }
     .tile-mod-label { font-size: 11px; top: 6px; left: 7px; letter-spacing: 0.12em; }
     .grid { gap: 10px; }
@@ -810,6 +889,11 @@
       Swap &amp; pass
     </button>
   </div>
+
+  <section class="history-section" id="historySection" hidden>
+    <div class="history-title">History</div>
+    <div class="history-list" id="historyList"></div>
+  </section>
 
   <section class="dist-section">
     <div class="dist-label">Letters in this bag</div>
@@ -993,6 +1077,8 @@
     dictStatus: document.getElementById('dictStatus'),
     concealOverlay: document.getElementById('concealOverlay'),
     concealPlayerNum: document.getElementById('concealPlayerNum'),
+    historySection: document.getElementById('historySection'),
+    historyList: document.getElementById('historyList'),
   };
 
   let currentDist = null;
@@ -1011,6 +1097,7 @@
   let endingTurn = false;
   let turnTimer = null;
   let lastPlay = null;
+  let history = [];
 
   let dictionary = null;
   let dictionaryState = 'idle';
@@ -1092,6 +1179,7 @@
     endingTurn = false;
     if (turnTimer) { clearTimeout(turnTimer); turnTimer = null; }
     lastPlay = null;
+    history = [];
 
     if (!dist) {
       currentBag = []; currentDist = null;
@@ -1134,6 +1222,7 @@
     renderDist();
     renderWordBuilder();
     renderStats();
+    renderHistory();
   }
 
   function shuffleRack() {
@@ -1202,11 +1291,13 @@
   // Shared end-of-turn flow: render the current player's new state with animation,
   // then after a brief delay, advance turn and conceal (multi-player only).
   function endTurn() {
+    if (lastPlay) history.push(lastPlay);
     endingTurn = true;
     renderScoreboard();
     renderTiles();
     renderWordBuilder();
     renderStats();
+    renderHistory();
 
     if (turnTimer) clearTimeout(turnTimer);
     turnTimer = setTimeout(() => {
@@ -1327,6 +1418,51 @@
       item.title = desc;
       els.distMods.appendChild(item);
     }
+  }
+
+  function renderHistory() {
+    if (history.length === 0) {
+      els.historySection.hidden = true;
+      els.historyList.innerHTML = '';
+      return;
+    }
+    els.historySection.hidden = false;
+    let html = '';
+    // Most recent first
+    for (let i = history.length - 1; i >= 0; i--) {
+      const entry = history[i];
+      const turnNum = i + 1;
+      if (entry.type === 'shuffle') {
+        html += `<div class="history-entry">
+          <span class="history-turn">${turnNum}</span>
+          <span class="history-player">Player ${entry.player + 1}</span>
+          <span class="history-action">swapped tiles</span>
+          <span class="history-score"></span>
+        </div>`;
+      } else {
+        const mult = entry.wordMult > 1 ? ` <span class="mult">×${entry.wordMult}</span>` : '';
+        let tilesHtml = '';
+        for (const tile of entry.tiles) {
+          const modChip = tile.mod
+            ? `<span class="word-mod ${tile.mod.toLowerCase()}">${tile.mod}</span>`
+            : `<span class="word-mod-spacer"></span>`;
+          tilesHtml += `<span class="word-letter">
+            <span class="letter">${tile.letter}</span>
+            ${modChip}
+          </span>`;
+        }
+        const resolved = entry.usedWildcard && entry.resolved !== entry.word
+          ? `<span class="history-resolved">→ ${entry.resolved}</span>`
+          : '';
+        html += `<div class="history-entry">
+          <span class="history-turn">${turnNum}</span>
+          <span class="history-player">Player ${entry.player + 1}</span>
+          <div class="word-letters compact">${tilesHtml}${resolved}</div>
+          <span class="history-score">${entry.score} pt${entry.score === 1 ? '' : 's'}${mult}</span>
+        </div>`;
+      }
+    }
+    els.historyList.innerHTML = html;
   }
 
   function renderWordBuilder() {
