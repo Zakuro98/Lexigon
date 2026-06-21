@@ -376,6 +376,13 @@
     margin-left: 6px;
   }
 
+  .word-score .bonus {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-left: 6px;
+  }
+
   button.ghost {
     background: transparent;
     color: var(--text-secondary);
@@ -671,6 +678,11 @@
   .history-score .mult {
     color: var(--magenta);
     font-weight: 700;
+    margin-left: 4px;
+  }
+  .history-score .bonus {
+    color: var(--text-secondary);
+    font-weight: 600;
     margin-left: 4px;
   }
 
@@ -1021,7 +1033,8 @@
       if (tile.mod === 'DW') wordMult *= 2;
       else if (tile.mod === 'TW') wordMult *= 3;
     }
-    return { letterSum, wordMult, total: letterSum * wordMult };
+    const lengthBonus = Math.max(0, (tiles.length - 6) * 10);
+    return { letterSum, wordMult, lengthBonus, total: letterSum * wordMult + lengthBonus };
   }
 
   // ────────── Rack draw with DW/TW restriction ──────────
@@ -1262,7 +1275,7 @@
       return;
     }
 
-    const { total: finalScore, wordMult } = calcWordScore(tiles);
+    const { total: finalScore, wordMult, lengthBonus } = calcWordScore(tiles);
     playerScores[currentPlayer] += finalScore;
     playerWords[currentPlayer] += 1;
 
@@ -1275,6 +1288,7 @@
       resolved: resolved,
       score: finalScore,
       wordMult: wordMult,
+      lengthBonus: lengthBonus,
       usedWildcard: word.includes(WILDCARD),
     };
 
@@ -1440,6 +1454,7 @@
         </div>`;
       } else {
         const mult = entry.wordMult > 1 ? ` <span class="mult">×${entry.wordMult}</span>` : '';
+        const bonus = entry.lengthBonus > 0 ? ` <span class="bonus">+${entry.lengthBonus}</span>` : '';
         let tilesHtml = '';
         for (const tile of entry.tiles) {
           const modChip = tile.mod
@@ -1457,7 +1472,7 @@
           <span class="history-turn">${turnNum}</span>
           <span class="history-player">Player ${entry.player + 1}</span>
           <div class="word-letters compact">${tilesHtml}${resolved}</div>
-          <span class="history-score">${entry.score} pt${entry.score === 1 ? '' : 's'}${mult}</span>
+          <span class="history-score">${entry.score} pt${entry.score === 1 ? '' : 's'}${mult}${bonus}</span>
         </div>`;
       }
     }
@@ -1497,9 +1512,10 @@
       }
       els.wordLetters.innerHTML = html;
 
-      const { total, wordMult } = calcWordScore(tiles);
+      const { total, wordMult, lengthBonus } = calcWordScore(tiles);
       const multIndicator = wordMult > 1 ? `<span class="mult">×${wordMult}</span>` : '';
-      els.wordScore.innerHTML = `${total}<span class="unit">pt${total === 1 ? '' : 's'}</span>${multIndicator}`;
+      const bonusIndicator = lengthBonus > 0 ? `<span class="bonus">+${lengthBonus}</span>` : '';
+      els.wordScore.innerHTML = `${total}<span class="unit">pt${total === 1 ? '' : 's'}</span>${multIndicator}${bonusIndicator}`;
 
       els.wordLetters.querySelectorAll('.word-letter').forEach(el => {
         el.addEventListener('click', () => toggleTile(Number(el.dataset.idx)));
@@ -1543,7 +1559,8 @@
       els.wordLetters.innerHTML = html;
 
       const multIndicator = lp.wordMult > 1 ? `<span class="mult">×${lp.wordMult}</span>` : '';
-      els.wordScore.innerHTML = `${lp.score}<span class="unit">pt${lp.score === 1 ? '' : 's'}</span>${multIndicator}`;
+      const bonusIndicator = lp.lengthBonus > 0 ? `<span class="bonus">+${lp.lengthBonus}</span>` : '';
+      els.wordScore.innerHTML = `${lp.score}<span class="unit">pt${lp.score === 1 ? '' : 's'}</span>${multIndicator}${bonusIndicator}`;
       return;
     }
 
