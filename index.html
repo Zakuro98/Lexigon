@@ -519,7 +519,7 @@
     color: var(--tile-text);
     font-family: 'Merriweather', Georgia, serif;
     font-weight: 700;
-    font-size: clamp(36px, 12vw, 60px);
+    font-size: clamp(36px, 12vw, 68px);
     line-height: 1;
     box-shadow:
       inset 0 -4px 0 var(--tile-shadow),
@@ -577,7 +577,7 @@
     bottom: 9px;
     right: 13px;
     font-family: 'Inter', sans-serif;
-    font-size: 26px;
+    font-size: clamp(13px, 4vw, 18px);
     font-weight: 700;
     color: var(--tile-text);
     line-height: 1;
@@ -590,7 +590,7 @@
     top: 8px;
     left: 9px;
     font-family: 'Inter', sans-serif;
-    font-size: 13px;
+    font-size: clamp(11px, 2.6vw, 14px);
     font-weight: 700;
     letter-spacing: 0.14em;
     color: white;
@@ -779,8 +779,8 @@
     .control-players, button.primary { grid-column: 1 / -1; }
     .seg-group { width: 100%; justify-content: center; }
     .seg-btn { flex: 1; }
-    .tile-pts { font-size: 13px; bottom: 5px; right: 8px; }
-    .tile-mod-label { font-size: 11px; top: 6px; left: 7px; letter-spacing: 0.12em; }
+    .tile-pts { bottom: 5px; right: 8px; }
+    .tile-mod-label { top: 6px; left: 7px; letter-spacing: 0.12em; }
     .grid { gap: 10px; }
     .player-score { font-size: 32px; }
 
