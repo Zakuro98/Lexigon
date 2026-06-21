@@ -1033,7 +1033,8 @@
       if (tile.mod === 'DW') wordMult *= 2;
       else if (tile.mod === 'TW') wordMult *= 3;
     }
-    const lengthBonus = Math.max(0, (tiles.length - 6) * 10);
+    const len = tiles.length;
+    const lengthBonus = Math.max(0, (len - 6) * 5) + (len === 16 ? 10 : 0);
     return { letterSum, wordMult, lengthBonus, total: letterSum * wordMult + lengthBonus };
   }
 
