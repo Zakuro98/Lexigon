@@ -936,10 +936,10 @@
     k:7, w:7,
     z:8, x:8,
     j:9, q:10,
-    '?': 0,
+    '_': 0,
   };
 
-  const WILDCARD = '?';
+  const WILDCARD = '_';
   const WILDCARD_RATE = 0.02;
   const MOD_RATES = { DL: 0.025, TL: 0.0125, DW: 0.025, TW: 0.0125 };
   const WORD_MULTS = new Set(['DW', 'TW']);
@@ -1034,7 +1034,10 @@
       else if (tile.mod === 'TW') wordMult *= 3;
     }
     const len = tiles.length;
-    const lengthBonus = Math.max(0, (len - 6) * 5) + (len === 16 ? 10 : 0);
+    let lengthBonus;
+    if (len < 7) lengthBonus = 0;
+    else if (len === 16) lengthBonus = 75;
+    else lengthBonus = 10 + (len - 7) * 5;
     return { letterSum, wordMult, lengthBonus, total: letterSum * wordMult + lengthBonus };
   }
 
@@ -1387,8 +1390,10 @@
         tile.className = 'tile' + modClass + (isSelected ? ' selected' : '') + (shouldAnimate ? ' animate' : '');
         if (shouldAnimate) tile.style.animationDelay = `${i * 28}ms`;
         const modLabel = data.mod ? `<span class="tile-mod-label">${data.mod}</span>` : '';
-        const displayedScore = tileDisplayedScore(data);
-        tile.innerHTML = `${modLabel}${data.letter}<span class="tile-pts">${displayedScore}</span>`;
+        const isWildcard = data.letter === WILDCARD;
+        const letterHtml = isWildcard ? '' : data.letter;
+        const ptsHtml = isWildcard ? '' : `<span class="tile-pts">${tileDisplayedScore(data)}</span>`;
+        tile.innerHTML = `${modLabel}${letterHtml}${ptsHtml}`;
         tile.addEventListener('click', () => toggleTile(i));
       } else {
         tile.className = 'tile empty';
