@@ -1121,6 +1121,7 @@
   const WORD_MULTS = new Set(['DW', 'TW']);
   const DUEL_MODS = new Set(['X2', 'X3', 'X4', 'X5']);
   const DUEL_STARTING_HEALTH = 200;
+  const DUEL_POOL_SIZE = 256;
   const RACK_SIZE = 16;
   const MIN_WORD_LENGTH = 1;
   const DEFAULT_PLAYERS = 2;
@@ -1132,14 +1133,8 @@
   // ────────── Bag construction ──────────
 
   function makeDuelDistribution() {
-    const totalFreq = Object.values(LETTER_FREQS).reduce((sum, freq) => sum + freq, 0);
-    const letterShare = 1 - WILDCARD_RATE;
-    const weights = {};
-    for (const [letter, freq] of Object.entries(LETTER_FREQS)) {
-      weights[letter] = letterShare * (freq / totalFreq);
-    }
-    weights[WILDCARD] = WILDCARD_RATE;
-    return weights;
+    // Duel samples with replacement from a fixed 256-tile virtual bag.
+    return makeTileDistribution(DUEL_POOL_SIZE, 1);
   }
 
   function makeTileDistribution(totalTiles, minPerLetter) {
@@ -1646,7 +1641,7 @@
 
     if (gameMode === 'duel') {
       setNumPlayers(2);
-      els.distLabel.textContent = 'Letter distribution';
+      els.distLabel.textContent = `Letters in the ${DUEL_POOL_SIZE}-tile pool`;
     } else {
       setNumPlayers(numPlayers);
       els.bagSizeLabel.textContent = 'Bag size';
