@@ -2135,9 +2135,7 @@
     for (const [letter, count] of entries) {
       const item = document.createElement('div');
       item.className = 'dist-item';
-      const displayCount = gameMode === 'duel'
-        ? `${(count * 100).toFixed(count * 100 < 1 ? 2 : 1)}%`
-        : count;
+      const displayCount = count;
       item.innerHTML = `<span class="l">${letter}</span><span class="c">${displayCount}</span>`;
       els.distList.appendChild(item);
     }
