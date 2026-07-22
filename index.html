@@ -48,6 +48,7 @@
   }
 
   .container { max-width: 860px; margin: 0 auto; }
+  body.duel-mode .control-bag-settings { display: none; }
   .header { margin-bottom: 44px; }
 
   h1 {
@@ -953,6 +954,39 @@
     }
     .word-actions { width: 100%; }
     .word-actions button { flex: 1; padding: 10px; font-size: 14px; }
+
+    .history-entry {
+      grid-template-columns: 28px 1fr;
+      grid-template-areas:
+        "turn player"
+        "content content"
+        "score score";
+      align-items: start;
+      gap: 8px 12px;
+    }
+    .history-entry > :nth-child(1) { grid-area: turn; }
+    .history-entry > :nth-child(2) { grid-area: player; }
+    .history-entry > :nth-child(3) { grid-area: content; }
+    .history-entry > :nth-child(4) { grid-area: score; }
+    .history-player { align-self: center; }
+    .history-score { justify-self: start; }
+    .word-letters.compact {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      overflow-y: hidden;
+      max-width: 100%;
+      padding-bottom: 2px;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
+    }
+    .word-letters.compact .word-letter { flex: 0 0 auto; }
+    .history-action { display: block; }
+    .history-resolved {
+      display: block;
+      margin-left: 0;
+      margin-top: 6px;
+      white-space: normal;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -976,11 +1010,11 @@
         <button class="seg-btn" type="button" data-mode="duel" role="radio" aria-checked="false">Duel</button>
       </div>
     </div>
-    <div class="control">
+    <div class="control control-bag-settings">
       <label for="bagSize" id="bagSizeLabel">Bag size</label>
       <input type="number" id="bagSize" value="160" min="0" max="2000" step="1">
     </div>
-    <div class="control">
+    <div class="control control-bag-settings">
       <label for="minPerLetter">Min per letter</label>
       <input type="number" id="minPerLetter" value="1" min="0" max="50" step="1">
     </div>
@@ -1096,6 +1130,17 @@
   const TURN_END_DELAY = 1500;
 
   // ────────── Bag construction ──────────
+
+  function makeDuelDistribution() {
+    const totalFreq = Object.values(LETTER_FREQS).reduce((sum, freq) => sum + freq, 0);
+    const letterShare = 1 - WILDCARD_RATE;
+    const weights = {};
+    for (const [letter, freq] of Object.entries(LETTER_FREQS)) {
+      weights[letter] = letterShare * (freq / totalFreq);
+    }
+    weights[WILDCARD] = WILDCARD_RATE;
+    return weights;
+  }
 
   function makeTileDistribution(totalTiles, minPerLetter) {
     const letters = Object.keys(LETTER_FREQS);
@@ -1332,10 +1377,27 @@
     return null;
   }
 
+  function duelDistributionTotal(nonBlankOnly = false) {
+    if (!currentDist) return 0;
+    let total = 0;
+    for (const [letter, count] of Object.entries(currentDist)) {
+      if (nonBlankOnly && letter === WILDCARD) continue;
+      total += count;
+    }
+    return total;
+  }
+
   function sampleDuelLetter(nonBlankOnly = false) {
-    const pool = nonBlankOnly ? duelNonBlankPool : duelPool;
-    if (pool.length === 0) return null;
-    return pool[Math.floor(Math.random() * pool.length)].letter;
+    const total = duelDistributionTotal(nonBlankOnly);
+    if (total <= 0) return null;
+
+    let roll = Math.random() * total;
+    for (const [letter, count] of Object.entries(currentDist)) {
+      if (nonBlankOnly && letter === WILDCARD) continue;
+      if (roll < count) return letter;
+      roll -= count;
+    }
+    return null;
   }
 
   function drawDuelTile(guaranteedMod = null) {
@@ -1352,7 +1414,7 @@
 
     // Slightly raise the conditional odds on nonblank letters so the overall
     // natural rates remain exactly X2 = 1/32 and X3 = 1/64 across all draws.
-    const nonBlankRate = duelNonBlankPool.length / duelPool.length;
+    const nonBlankRate = duelDistributionTotal(true) / duelDistributionTotal(false);
     const x3Rate = Math.min(1, (1 / 64) / nonBlankRate);
     const x2Rate = Math.min(1 - x3Rate, (1 / 32) / nonBlankRate);
     const roll = Math.random();
@@ -1431,8 +1493,6 @@
 
   let currentDist = null;
   let currentBag = [];
-  let duelPool = [];
-  let duelNonBlankPool = [];
   let modSummary = { DL: 0, TL: 0, DW: 0, TW: 0 };
   let playerRacks = [];
   let playerSelections = [];
@@ -1586,9 +1646,7 @@
 
     if (gameMode === 'duel') {
       setNumPlayers(2);
-      els.bagSize.value = String(DEFAULT_BAG_BY_PLAYERS[2]);
-      els.bagSizeLabel.textContent = 'Pool size';
-      els.distLabel.textContent = 'Letters in this pool';
+      els.distLabel.textContent = 'Letter distribution';
     } else {
       setNumPlayers(numPlayers);
       els.bagSizeLabel.textContent = 'Bag size';
@@ -1617,8 +1675,15 @@
   }
 
   function startNewGame() {
-    const { bagSize, minPerLetter } = readGameSettings();
-    const dist = makeTileDistribution(bagSize, minPerLetter);
+    let bagSize = 0;
+    let minPerLetter = 0;
+    let dist;
+    if (gameMode === 'duel') {
+      dist = makeDuelDistribution();
+    } else {
+      ({ bagSize, minPerLetter } = readGameSettings());
+      dist = makeTileDistribution(bagSize, minPerLetter);
+    }
 
     playerScores = new Array(numPlayers).fill(0);
     playerWords = new Array(numPlayers).fill(0);
@@ -1636,8 +1701,6 @@
     consecutivePasses = 0;
     gameEndResult = null;
     currentBag = [];
-    duelPool = [];
-    duelNonBlankPool = [];
 
     if (!dist) {
       currentDist = null;
@@ -1653,22 +1716,20 @@
     }
 
     currentDist = dist;
-    const fullBag = makeBag(dist);
 
     if (gameMode === 'duel') {
-      if (!fullBag.some(t => t.letter !== WILDCARD)) {
+      if (duelDistributionTotal(true) === 0) {
         currentDist = null;
-        els.stats.innerHTML = '<span class="error">Duel Mode needs at least one nonblank letter in its distribution pool.</span>';
+        els.stats.innerHTML = '<span class="error">Duel Mode needs at least one nonblank letter in its distribution.</span>';
         els.tileGrid.innerHTML = ''; els.distList.innerHTML = ''; els.distMods.innerHTML = '';
         els.scoreboard.innerHTML = '';
         els.concealOverlay.hidden = true;
         renderWordBuilder();
         return;
       }
-      duelPool = fullBag;
-      duelNonBlankPool = fullBag.filter(t => t.letter !== WILDCARD);
       modSummary = { DL: 0, TL: 0, DW: 0, TW: 0 };
     } else {
+      const fullBag = makeBag(dist);
       assignModifiers(fullBag, bagSize);
       shuffleArr(fullBag);
       modSummary = { DL: 0, TL: 0, DW: 0, TW: 0 };
@@ -2019,8 +2080,7 @@
     if (gameMode === 'duel') {
       els.stats.innerHTML = `
         <span class="stat"><strong>${inRack}</strong> in rack</span>
-        <span class="stat"><strong>∞</strong> bag</span>
-        <span class="stat"><strong>${duelPool.length}</strong>-tile distribution pool</span>
+        <span class="stat"><strong>∞</strong> draws</span>
       `;
       return;
     }
@@ -2080,7 +2140,10 @@
     for (const [letter, count] of entries) {
       const item = document.createElement('div');
       item.className = 'dist-item';
-      item.innerHTML = `<span class="l">${letter}</span><span class="c">${count}</span>`;
+      const displayCount = gameMode === 'duel'
+        ? `${(count * 100).toFixed(count * 100 < 1 ? 2 : 1)}%`
+        : count;
+      item.innerHTML = `<span class="l">${letter}</span><span class="c">${displayCount}</span>`;
       els.distList.appendChild(item);
     }
 
@@ -2142,7 +2205,6 @@
       } else {
         const mult = gameMode === 'classic' && entry.wordMult > 1 ? ` <span class="mult">×${entry.wordMult}</span>` : '';
         const bonus = entry.lengthBonus > 0 ? ` <span class="bonus">+${entry.lengthBonus}</span>` : '';
-        const reward = entry.rewardMod ? ` <span class="bonus">→ ${modifierLabel(entry.rewardMod)} draw</span>` : '';
         let tilesHtml = '';
         for (const tile of entry.tiles) {
           tilesHtml += `<span class="word-letter">
@@ -2158,7 +2220,7 @@
           <span class="history-turn">${turnNum}</span>
           <span class="history-player">Player ${entry.player + 1}</span>
           <div class="word-letters compact">${tilesHtml}${resolved}</div>
-          <span class="history-score">${entry.score} ${unit}${mult}${bonus}${reward}</span>
+          <span class="history-score">${entry.score} ${unit}${mult}${bonus}</span>
         </div>`;
       }
     }
@@ -2219,9 +2281,8 @@
       const multIndicator = gameMode === 'classic' && wordMult > 1 ? `<span class="mult">×${wordMult}</span>` : '';
       const bonusIndicator = lengthBonus > 0 ? `<span class="bonus">+${lengthBonus}</span>` : '';
       const pendingReward = gameMode === 'duel' ? duelRewardForLength(tiles.length) : null;
-      const rewardIndicator = pendingReward ? `<span class="bonus">→ ${modifierLabel(pendingReward)} draw</span>` : '';
       const unit = gameMode === 'duel' ? 'dmg' : `pt${total === 1 ? '' : 's'}`;
-      els.wordScore.innerHTML = `${total}<span class="unit">${unit}</span>${multIndicator}${bonusIndicator}${rewardIndicator}`;
+      els.wordScore.innerHTML = `${total}<span class="unit">${unit}</span>${multIndicator}${bonusIndicator}`;
 
       els.wordLetters.querySelectorAll('.word-letter').forEach(el => {
         el.addEventListener('click', () => toggleTile(Number(el.dataset.idx)));
@@ -2274,9 +2335,8 @@
 
       const multIndicator = gameMode === 'classic' && lp.wordMult > 1 ? `<span class="mult">×${lp.wordMult}</span>` : '';
       const bonusIndicator = lp.lengthBonus > 0 ? `<span class="bonus">+${lp.lengthBonus}</span>` : '';
-      const rewardIndicator = lp.rewardMod ? `<span class="bonus">→ ${modifierLabel(lp.rewardMod)} draw</span>` : '';
       const unit = gameMode === 'duel' ? 'dmg' : `pt${lp.score === 1 ? '' : 's'}`;
-      els.wordScore.innerHTML = `${lp.score}<span class="unit">${unit}</span>${multIndicator}${bonusIndicator}${rewardIndicator}`;
+      els.wordScore.innerHTML = `${lp.score}<span class="unit">${unit}</span>${multIndicator}${bonusIndicator}`;
       return;
     }
 
