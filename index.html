@@ -28,6 +28,11 @@
     --mod-tl: #1A3F77;
     --mod-dw: #C9396F;
     --mod-tw: #B11E18;
+    --duel-x2: #2FAF9B;
+    --duel-x3: #7656D6;
+    --duel-x4: #E34D9A;
+    --duel-x5: #F6C84A;
+    --duel-x5-deep: #E17A18;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -42,7 +47,7 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  .container { max-width: 760px; margin: 0 auto; }
+  .container { max-width: 860px; margin: 0 auto; }
   .header { margin-bottom: 44px; }
 
   h1 {
@@ -60,7 +65,7 @@
 
   .controls {
     display: grid;
-    grid-template-columns: 1fr 1fr auto auto;
+    grid-template-columns: auto 1fr 1fr auto auto;
     gap: 16px;
     margin-bottom: 12px;
     align-items: end;
@@ -123,8 +128,9 @@
     min-width: 36px;
   }
 
-  .seg-btn:hover:not(.active) { background: var(--surface-2); color: var(--text-primary); }
+  .seg-btn:hover:not(.active):not(:disabled) { background: var(--surface-2); color: var(--text-primary); }
   .seg-btn.active { background: var(--magenta); color: white; }
+  .seg-btn:disabled { opacity: 0.32; cursor: not-allowed; }
 
   button.primary {
     background: var(--magenta);
@@ -236,6 +242,72 @@
   .player-card.current .player-score { color: var(--magenta); }
   .player-words { font-size: 12px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
 
+  .health-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .health-value {
+    font-family: 'Merriweather', serif;
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+  }
+  .health-unit {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .health-track {
+    height: 11px;
+    border-radius: 999px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .health-fill {
+    height: 100%;
+    width: 100%;
+    background: linear-gradient(90deg, var(--magenta-dim), var(--magenta-glow));
+    border-radius: inherit;
+    transition: width 560ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: width;
+  }
+  .player-card.defeated .health-fill { filter: saturate(0.7) brightness(0.85); }
+  .player-card.damaged {
+    animation: damage-card 560ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .player-card.damaged .health-track {
+    animation: damage-track 560ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  @keyframes damage-card {
+    0% { transform: translateX(0); }
+    12% { transform: translateX(-4px); }
+    24% { transform: translateX(4px); }
+    38% { transform: translateX(-2px); }
+    54%, 100% { transform: translateX(0); }
+  }
+
+  @keyframes damage-track {
+    0%, 100% { box-shadow: none; }
+    18% { box-shadow: 0 0 0 2px rgba(255, 85, 119, 0.35), 0 0 14px rgba(255, 85, 119, 0.48); }
+  }
+  .duel-substats {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
   .game-over-banner {
     background: var(--surface-2);
     border: 1px solid var(--magenta);
@@ -321,17 +393,6 @@
   }
 
   .word-builder.has-word { border-color: var(--magenta-dim); }
-  .word-builder.invalid {
-    border-color: var(--danger);
-    animation: shake 360ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
-  }
-
-  @keyframes shake {
-    0%, 100% { transform: translateX(0); }
-    10%, 30%, 50%, 70%, 90% { transform: translateX(-6px); }
-    20%, 40%, 60%, 80% { transform: translateX(6px); }
-  }
-
   .word-display { flex: 1; min-width: 0; }
   .word-letters { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 2px; }
 
@@ -379,24 +440,13 @@
   .word-mod.tl { background: var(--mod-tl); }
   .word-mod.dw { background: var(--mod-dw); }
   .word-mod.tw { background: var(--mod-tw); }
+  .word-mod.x2 { background: var(--duel-x2); }
+  .word-mod.x3 { background: var(--duel-x3); }
+  .word-mod.x4 { background: var(--duel-x4); }
+  .word-mod.x5 { background: linear-gradient(135deg, var(--duel-x5), var(--duel-x5-deep)); color: #3A2100; }
 
   .word-empty { color: var(--text-tertiary); font-size: 14px; font-style: italic; }
 
-  .word-feedback {
-    color: var(--danger);
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-top: 6px;
-    height: 14px;
-    line-height: 1;
-    opacity: 0;
-    transition: opacity 200ms;
-  }
-
-  .word-feedback.show { opacity: 1; }
-  .word-feedback.success { color: var(--success); }
 
   .word-meta { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 
@@ -593,6 +643,16 @@
   .tile.mod-tl { background: var(--mod-tl); }
   .tile.mod-dw { background: var(--mod-dw); }
   .tile.mod-tw { background: var(--mod-tw); }
+  .tile.mod-x2 { background: var(--duel-x2); }
+  .tile.mod-x3 { background: var(--duel-x3); }
+  .tile.mod-x4 { background: var(--duel-x4); }
+  .tile.mod-x5 { background: linear-gradient(135deg, var(--duel-x5), var(--duel-x5-deep)); }
+  .tile.mod-x5.has-mod {
+    box-shadow:
+      inset 0 -4px 0 rgba(0,0,0,0.22),
+      0 2px 0 rgba(0,0,0,0.5),
+      0 6px 18px rgba(238, 156, 28, 0.46);
+  }
 
   .tile.has-mod {
     color: white;
@@ -606,6 +666,17 @@
   .tile.has-mod .tile-pts {
     color: white;
     opacity: 0.92;
+  }
+
+  .tile.mod-x5.has-mod {
+    color: #3A2100;
+    text-shadow: 0 1px 1px rgba(255,255,255,0.35);
+  }
+
+  .tile.mod-x5.has-mod .tile-pts,
+  .tile.mod-x5.has-mod .tile-mod-label {
+    color: #3A2100;
+    text-shadow: 0 1px 1px rgba(255,255,255,0.35);
   }
 
   .tile.animate { animation: tile-in 320ms cubic-bezier(0.22, 1, 0.36, 1) backwards; }
@@ -827,6 +898,14 @@
   .dist-mod-dw .tag { background: var(--mod-dw); }
   .dist-mod-tw { border-color: var(--mod-tw); background: rgba(177, 30, 24, 0.1); }
   .dist-mod-tw .tag { background: var(--mod-tw); }
+  .dist-mod-x2 { border-color: var(--duel-x2); background: rgba(47, 175, 155, 0.09); }
+  .dist-mod-x2 .tag { background: var(--duel-x2); }
+  .dist-mod-x3 { border-color: var(--duel-x3); background: rgba(118, 86, 214, 0.11); }
+  .dist-mod-x3 .tag { background: var(--duel-x3); }
+  .dist-mod-x4 { border-color: var(--duel-x4); background: rgba(227, 77, 154, 0.10); }
+  .dist-mod-x4 .tag { background: var(--duel-x4); }
+  .dist-mod-x5 { border-color: var(--duel-x5-deep); background: rgba(238, 156, 28, 0.11); }
+  .dist-mod-x5 .tag { background: linear-gradient(135deg, var(--duel-x5), var(--duel-x5-deep)); color: #3A2100; }
 
   .error {
     color: var(--danger);
@@ -841,7 +920,7 @@
     body { padding: 36px 18px; }
     h1 { font-size: 44px; }
     .controls { grid-template-columns: 1fr 1fr; }
-    .control-players, button.primary { grid-column: 1 / -1; }
+    .control-mode, .control-players, button.primary { grid-column: 1 / -1; }
     .seg-group { width: 100%; justify-content: center; }
     .seg-btn { flex: 1; }
     .tile-pts { bottom: 5px; right: 8px; }
@@ -859,7 +938,7 @@
     .word-display { width: 100%; text-align: center; }
     .word-letters { justify-content: center; }
     .word-letter .letter { font-size: 32px; }
-    .word-empty, .word-feedback { text-align: center; }
+    .word-empty { text-align: center; }
     .word-meta {
       flex-direction: column;
       width: 100%;
@@ -878,7 +957,6 @@
 
   @media (prefers-reduced-motion: reduce) {
     .tile.animate { animation: none; }
-    .word-builder.invalid { animation: none; }
     * { transition-duration: 0.01ms !important; }
   }
 </style>
@@ -891,8 +969,15 @@
   </header>
 
   <div class="controls">
+    <div class="control control-mode">
+      <label>Mode</label>
+      <div class="seg-group" id="modeGroup" role="radiogroup" aria-label="Game mode">
+        <button class="seg-btn active" type="button" data-mode="classic" role="radio" aria-checked="true">Classic</button>
+        <button class="seg-btn" type="button" data-mode="duel" role="radio" aria-checked="false">Duel</button>
+      </div>
+    </div>
     <div class="control">
-      <label for="bagSize">Bag size</label>
+      <label for="bagSize" id="bagSizeLabel">Bag size</label>
       <input type="number" id="bagSize" value="160" min="0" max="2000" step="1">
     </div>
     <div class="control">
@@ -919,7 +1004,7 @@
   <div class="dict-status" id="dictStatus"></div>
 
   <div class="game-over-banner" id="gameOverBanner" hidden>
-    <div class="game-over-title">Game Over</div>
+    <div class="game-over-title" id="gameOverTitle">Game Over</div>
     <div class="game-over-subtitle" id="gameOverSubtitle"></div>
   </div>
 
@@ -931,7 +1016,6 @@
     <div class="word-display">
       <div class="word-empty" id="wordEmpty">Click tiles to build a word</div>
       <div class="word-letters" id="wordLetters"></div>
-      <div class="word-feedback" id="wordFeedback"></div>
     </div>
     <div class="word-meta">
       <span class="word-score" id="wordScore" aria-live="polite"></span>
@@ -965,7 +1049,7 @@
   </section>
 
   <section class="dist-section">
-    <div class="dist-label">Letters in this bag</div>
+    <div class="dist-label" id="distLabel">Letters in this bag</div>
     <div class="dist" id="distList"></div>
     <div class="dist-label">Special tiles</div>
     <div class="dist-mods" id="distMods"></div>
@@ -1001,9 +1085,14 @@
   const WILDCARD_RATE = 0.02;
   const MOD_RATES = { DL: 0.025, TL: 0.0125, DW: 0.025, TW: 0.0125 };
   const WORD_MULTS = new Set(['DW', 'TW']);
+  const DUEL_MODS = new Set(['X2', 'X3', 'X4', 'X5']);
+  const DUEL_STARTING_HEALTH = 200;
   const RACK_SIZE = 16;
-  const MIN_WORD_LENGTH = 2;
+  const MIN_WORD_LENGTH = 1;
   const DEFAULT_PLAYERS = 2;
+  const DEFAULT_BAG_BY_PLAYERS = { 2: 160, 3: 192, 4: 224 };
+  const MAX_BAG_SIZE = 2000;
+  const MAX_MIN_PER_LETTER = 50;
   const TURN_END_DELAY = 1500;
 
   // ────────── Bag construction ──────────
@@ -1048,35 +1137,101 @@
   }
 
   function assignModifiers(bag, totalTiles) {
-    const counts = {
+    const remaining = {
       DL: totalTiles >= 1 ? Math.max(1, Math.round(totalTiles * MOD_RATES.DL)) : 0,
       TL: totalTiles >= 1 ? Math.max(1, Math.round(totalTiles * MOD_RATES.TL)) : 0,
       DW: totalTiles >= 1 ? Math.max(1, Math.round(totalTiles * MOD_RATES.DW)) : 0,
       TW: totalTiles >= 1 ? Math.max(1, Math.round(totalTiles * MOD_RATES.TW)) : 0,
     };
-    function assign(modType, eligible) {
+
+    function candidatesFor(eligible) {
       const candidates = [];
       for (let i = 0; i < bag.length; i++) {
         if (bag[i].mod === null && eligible(bag[i])) candidates.push(i);
       }
-      shuffleArr(candidates);
-      const n = Math.min(counts[modType], candidates.length);
-      for (let i = 0; i < n; i++) bag[candidates[i]].mod = modType;
+      return shuffleArr(candidates);
     }
-    assign('DL', t => t.letter !== WILDCARD);
-    assign('TL', t => t.letter !== WILDCARD);
-    assign('DW', () => true);
-    assign('TW', () => true);
+
+    function assignAt(index, modType) {
+      if (index === undefined || remaining[modType] <= 0 || bag[index].mod !== null) return false;
+      bag[index].mod = modType;
+      remaining[modType] -= 1;
+      return true;
+    }
+
+    function assignPreferredFirst(modType, eligible) {
+      // A lone modifier remains fully random. When there are two or more,
+      // reserve one for a particularly useful tile and randomize the rest.
+      if (remaining[modType] < 2) return;
+      const candidates = candidatesFor(eligible);
+      if (candidates.length > 0) assignAt(candidates[0], modType);
+    }
+
+    function assignRemaining(modType, eligible) {
+      const candidates = candidatesFor(eligible);
+      const n = Math.min(remaining[modType], candidates.length);
+      for (let i = 0; i < n; i++) assignAt(candidates[i], modType);
+    }
+
+    // Only guarantee the first copy when that modifier appears at least twice.
+    // Easy 1-point letters make DW/TW practical to play.
+    assignPreferredFirst('DW', t => t.letter !== WILDCARD && POINTS[t.letter] === 1);
+    assignPreferredFirst('TW', t => t.letter !== WILDCARD && POINTS[t.letter] === 1);
+    // Base 5+ point letters make DL/TL meaningfully valuable.
+    assignPreferredFirst('DL', t => t.letter !== WILDCARD && POINTS[t.letter] >= 5);
+    assignPreferredFirst('TL', t => t.letter !== WILDCARD && POINTS[t.letter] >= 5);
+
+    // Fill every remaining copy randomly under the normal eligibility rules.
+    assignRemaining('DL', t => t.letter !== WILDCARD);
+    assignRemaining('TL', t => t.letter !== WILDCARD);
+    assignRemaining('DW', () => true);
+    assignRemaining('TW', () => true);
   }
 
   // ────────── Score & display helpers ──────────
 
-  // Score that shows in the corner of an individual tile.
-  // DL/TL multiply the letter; DW/TW don't change a letter's own score.
+  function duelMultiplier(mod) {
+    if (!mod || !DUEL_MODS.has(mod)) return 1;
+    return Number(mod.slice(1));
+  }
+
+  function modifierLabel(mod) {
+    if (!mod) return '';
+    if (DUEL_MODS.has(mod)) return `${duelMultiplier(mod)}×`;
+    return mod;
+  }
+
+  function modifierClass(mod) {
+    return mod ? mod.toLowerCase() : '';
+  }
+
+  function modifierChip(tile) {
+    return tile.mod
+      ? `<span class="word-mod ${modifierClass(tile.mod)}">${modifierLabel(tile.mod)}</span>`
+      : `<span class="word-mod-spacer"></span>`;
+  }
+
+  function duelBaseValue(letter) {
+    const points = POINTS[letter] || 0;
+    if (points <= 0) return 0;
+    if (points === 1) return 1;
+    if (points <= 3) return 2;
+    // M is the most common of the 4-point letters, so it stays in the 2-damage bracket.
+    if (letter === 'm') return 2;
+    if (points <= 5) return 3;
+    if (points <= 7) return 4;
+    return 5;
+  }
+
+  // Score/damage that shows in the corner of an individual tile.
   function tileDisplayedScore(tile) {
-    let score = POINTS[tile.letter];
-    if (tile.mod === 'DL') score *= 2;
-    else if (tile.mod === 'TL') score *= 3;
+    let score = gameMode === 'duel' ? duelBaseValue(tile.letter) : POINTS[tile.letter];
+    if (gameMode === 'duel') {
+      score *= duelMultiplier(tile.mod);
+    } else {
+      if (tile.mod === 'DL') score *= 2;
+      else if (tile.mod === 'TL') score *= 3;
+    }
     return score;
   }
 
@@ -1084,16 +1239,31 @@
     let letterSum = 0;
     let wordMult = 1;
     for (const tile of tiles) {
-      let pts = POINTS[tile.letter];
-      if (tile.mod === 'DL') pts *= 2;
-      else if (tile.mod === 'TL') pts *= 3;
+      let pts = gameMode === 'duel' ? duelBaseValue(tile.letter) : POINTS[tile.letter];
+      if (gameMode === 'duel') {
+        pts *= duelMultiplier(tile.mod);
+      } else {
+        if (tile.mod === 'DL') pts *= 2;
+        else if (tile.mod === 'TL') pts *= 3;
+        if (tile.mod === 'DW') wordMult *= 2;
+        else if (tile.mod === 'TW') wordMult *= 3;
+      }
       letterSum += pts;
-      if (tile.mod === 'DW') wordMult *= 2;
-      else if (tile.mod === 'TW') wordMult *= 3;
     }
     const len = tiles.length;
-    const lengthBonus = Math.max(0, (len - 6) * 5) + (len === 16 ? 10 : 0);
+    const baseLengthBonus = Math.max(0, (len - 6) * 5) + (len === 16 ? 10 : 0);
+    const lengthBonus = gameMode === 'duel'
+      ? Math.round(baseLengthBonus * 0.6)
+      : baseLengthBonus;
     return { letterSum, wordMult, lengthBonus, total: letterSum * wordMult + lengthBonus };
+  }
+
+  function duelRewardForLength(length) {
+    if (length >= 11) return 'X5';
+    if (length === 10) return 'X4';
+    if (length === 9) return 'X3';
+    if (length >= 7) return 'X2';
+    return null;
   }
 
   // Penalty for a tile left in someone's rack at game end.
@@ -1147,7 +1317,7 @@
     };
   }
 
-  // ────────── Rack draw with DW/TW restriction ──────────
+  // ────────── Rack drawing ──────────
 
   function rackHasWordMult(targetRack) {
     return targetRack.some(t => t && WORD_MULTS.has(t.mod));
@@ -1162,9 +1332,59 @@
     return null;
   }
 
-  // Refills empty slots in the given rack from the bag, respecting the one-DW/TW-at-a-time rule.
-  function refillRack(targetRack) {
+  function sampleDuelLetter(nonBlankOnly = false) {
+    const pool = nonBlankOnly ? duelNonBlankPool : duelPool;
+    if (pool.length === 0) return null;
+    return pool[Math.floor(Math.random() * pool.length)].letter;
+  }
+
+  function drawDuelTile(guaranteedMod = null) {
+    if (guaranteedMod) {
+      const letter = sampleDuelLetter(true);
+      return letter ? { letter, mod: guaranteedMod } : null;
+    }
+
+    // Pick the letter directly from the distribution pool first, with replacement.
+    // Blanks keep their exact pool frequency and can never carry a multiplier.
+    const letter = sampleDuelLetter(false);
+    if (!letter) return null;
+    if (letter === WILDCARD) return { letter, mod: null };
+
+    // Slightly raise the conditional odds on nonblank letters so the overall
+    // natural rates remain exactly X2 = 1/48 and X3 = 1/96 across all draws.
+    const nonBlankRate = duelNonBlankPool.length / duelPool.length;
+    const x3Rate = Math.min(1, (1 / 96) / nonBlankRate);
+    const x2Rate = Math.min(1 - x3Rate, (1 / 48) / nonBlankRate);
+    const roll = Math.random();
+    const mod = roll < x3Rate ? 'X3'
+              : roll < x3Rate + x2Rate ? 'X2'
+              : null;
+    return { letter, mod };
+  }
+
+  function refillRack(targetRack, guaranteedMod = null) {
     const newIndices = new Set();
+
+    if (gameMode === 'duel') {
+      const emptyIndices = [];
+      for (let i = 0; i < RACK_SIZE; i++) {
+        if (targetRack[i] === null) emptyIndices.push(i);
+      }
+      const rewardIndex = guaranteedMod && emptyIndices.length > 0
+        ? emptyIndices[Math.floor(Math.random() * emptyIndices.length)]
+        : -1;
+
+      for (const i of emptyIndices) {
+        const tile = drawDuelTile(i === rewardIndex ? guaranteedMod : null);
+        if (tile) {
+          targetRack[i] = tile;
+          newIndices.add(i);
+        }
+      }
+      return newIndices;
+    }
+
+    // Classic mode: refill from the finite bag while respecting the one-DW/TW rule.
     for (let i = 0; i < RACK_SIZE; i++) {
       if (targetRack[i] !== null) continue;
       const tile = drawFromBag(rackHasWordMult(targetRack));
@@ -1180,7 +1400,9 @@
 
   const els = {
     bagSize: document.getElementById('bagSize'),
+    bagSizeLabel: document.getElementById('bagSizeLabel'),
     minPerLetter: document.getElementById('minPerLetter'),
+    modeGroup: document.getElementById('modeGroup'),
     playerCountGroup: document.getElementById('playerCountGroup'),
     stats: document.getElementById('stats'),
     scoreboard: document.getElementById('scoreboard'),
@@ -1196,27 +1418,33 @@
     wordLetters: document.getElementById('wordLetters'),
     wordEmpty: document.getElementById('wordEmpty'),
     wordScore: document.getElementById('wordScore'),
-    wordFeedback: document.getElementById('wordFeedback'),
     dictStatus: document.getElementById('dictStatus'),
     concealOverlay: document.getElementById('concealOverlay'),
     concealPlayerNum: document.getElementById('concealPlayerNum'),
     historySection: document.getElementById('historySection'),
     historyList: document.getElementById('historyList'),
     gameOverBanner: document.getElementById('gameOverBanner'),
+    gameOverTitle: document.getElementById('gameOverTitle'),
     gameOverSubtitle: document.getElementById('gameOverSubtitle'),
+    distLabel: document.getElementById('distLabel'),
   };
 
   let currentDist = null;
   let currentBag = [];
+  let duelPool = [];
+  let duelNonBlankPool = [];
   let modSummary = { DL: 0, TL: 0, DW: 0, TW: 0 };
   let playerRacks = [];
   let playerSelections = [];
   let newlyDrawnIndices = new Set();
 
+  let gameMode = 'classic';
   let numPlayers = DEFAULT_PLAYERS;
   let currentPlayer = 0;
   let playerScores = [];
   let playerWords = [];
+  let playerHealth = [];
+  let renderedPlayerHealth = [];
 
   let concealed = false;
   let endingTurn = false;
@@ -1240,6 +1468,8 @@
   // SOWPODS, dwyl, YAWL, ENABLE, SCOWL, and Norvig's high-frequency corpus.
   // Anything you add here gets merged in at runtime. Lowercase, a-z only.
   //
+  const ONE_LETTER_WORDS = ['a', 'i', 'o'];
+
   // Current list = 2020s slang from Wikipedia's glossary that the base dict misses.
   const EXTRA_WORDS = [
     'blud',
@@ -1280,13 +1510,16 @@
       const text = await new Response(stream).text();
       const words = text.split('\n').map(w => w.trim()).filter(w => w.length >= MIN_WORD_LENGTH);
       dictionary = new Set(words);
+      for (const w of ONE_LETTER_WORDS) dictionary.add(w);
       for (const w of EXTRA_WORDS) dictionary.add(w.toLowerCase());
       dictionaryState = 'ready';
       setDictStatus(`Dictionary ready: ${dictionary.size.toLocaleString()} words`, 'success');
+      renderWordBuilder();
       setTimeout(() => { if (dictionaryState === 'ready') setDictStatus(''); }, 2200);
     } catch (e) {
       dictionaryState = 'failed';
       setDictStatus('Dictionary failed to decode. Submissions won\'t be validated.', 'error');
+      renderWordBuilder();
       console.warn('Dictionary load failed:', e);
     }
   }
@@ -1309,24 +1542,88 @@
     return null;
   }
 
+  function getWordValidation(word) {
+    if (word.length < MIN_WORD_LENGTH) {
+      return { status: 'invalid', resolved: null };
+    }
+
+    if (dictionaryState === 'idle' || dictionaryState === 'loading') {
+      return { status: 'pending', resolved: null };
+    }
+
+    // Preserve fail-open behavior when dictionary decoding is unavailable.
+    if (dictionaryState === 'failed') {
+      return { status: 'unvalidated', resolved: word };
+    }
+
+    const resolved = resolveWord(word);
+    return resolved
+      ? { status: 'valid', resolved }
+      : { status: 'invalid', resolved: null };
+  }
+
   // ────────── Game flow ──────────
 
   function setNumPlayers(n) {
     numPlayers = n;
     els.playerCountGroup.querySelectorAll('.seg-btn').forEach(btn => {
-      const active = Number(btn.dataset.count) === n;
+      const count = Number(btn.dataset.count);
+      const active = count === n;
       btn.classList.toggle('active', active);
       btn.setAttribute('aria-checked', active ? 'true' : 'false');
+      btn.disabled = gameMode === 'duel' && count !== 2;
     });
   }
 
+  function setGameMode(mode) {
+    gameMode = mode === 'duel' ? 'duel' : 'classic';
+    document.body.classList.toggle('duel-mode', gameMode === 'duel');
+    els.modeGroup.querySelectorAll('.seg-btn').forEach(btn => {
+      const active = btn.dataset.mode === gameMode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
+
+    if (gameMode === 'duel') {
+      setNumPlayers(2);
+      els.bagSize.value = String(DEFAULT_BAG_BY_PLAYERS[2]);
+      els.bagSizeLabel.textContent = 'Pool size';
+      els.distLabel.textContent = 'Letters in this pool';
+    } else {
+      setNumPlayers(numPlayers);
+      els.bagSizeLabel.textContent = 'Bag size';
+      els.distLabel.textContent = 'Letters in this bag';
+    }
+  }
+
+  function clampIntegerInput(input, min, max, fallback) {
+    const parsed = Number(input.value);
+    const integer = Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
+    const clamped = Math.min(max, Math.max(min, integer));
+    input.value = String(clamped);
+    return clamped;
+  }
+
+  function readGameSettings() {
+    return {
+      bagSize: clampIntegerInput(
+        els.bagSize,
+        0,
+        MAX_BAG_SIZE,
+        DEFAULT_BAG_BY_PLAYERS[numPlayers] ?? DEFAULT_BAG_BY_PLAYERS[DEFAULT_PLAYERS]
+      ),
+      minPerLetter: clampIntegerInput(els.minPerLetter, 0, MAX_MIN_PER_LETTER, 1),
+    };
+  }
+
   function startNewGame() {
-    const bagSize = Math.max(0, Math.floor(Number(els.bagSize.value) || 0));
-    const minPerLetter = Math.max(0, Math.floor(Number(els.minPerLetter.value) || 0));
+    const { bagSize, minPerLetter } = readGameSettings();
     const dist = makeTileDistribution(bagSize, minPerLetter);
 
     playerScores = new Array(numPlayers).fill(0);
     playerWords = new Array(numPlayers).fill(0);
+    playerHealth = new Array(numPlayers).fill(DUEL_STARTING_HEALTH);
+    renderedPlayerHealth = playerHealth.slice();
     playerRacks = [];
     playerSelections = [];
     currentPlayer = 0;
@@ -1338,11 +1635,14 @@
     gameOver = false;
     consecutivePasses = 0;
     gameEndResult = null;
+    currentBag = [];
+    duelPool = [];
+    duelNonBlankPool = [];
 
     if (!dist) {
-      currentBag = []; currentDist = null;
+      currentDist = null;
       modSummary = { DL: 0, TL: 0, DW: 0, TW: 0 };
-      const wildcards = Math.max(1, Math.round(bagSize * WILDCARD_RATE));
+      const wildcards = bagSize >= 1 ? Math.max(1, Math.round(bagSize * WILDCARD_RATE)) : 0;
       const needed = 26 * minPerLetter + wildcards;
       els.stats.innerHTML = `<span class="error">Need at least ${needed} tiles for a minimum of ${minPerLetter} per letter (after reserving ${wildcards} wildcard${wildcards === 1 ? '' : 's'}).</span>`;
       els.tileGrid.innerHTML = ''; els.distList.innerHTML = ''; els.distMods.innerHTML = '';
@@ -1354,22 +1654,34 @@
 
     currentDist = dist;
     const fullBag = makeBag(dist);
-    assignModifiers(fullBag, bagSize);
-    shuffleArr(fullBag);
 
-    modSummary = { DL: 0, TL: 0, DW: 0, TW: 0 };
-    for (const t of fullBag) if (t.mod) modSummary[t.mod]++;
+    if (gameMode === 'duel') {
+      if (!fullBag.some(t => t.letter !== WILDCARD)) {
+        currentDist = null;
+        els.stats.innerHTML = '<span class="error">Duel Mode needs at least one nonblank letter in its distribution pool.</span>';
+        els.tileGrid.innerHTML = ''; els.distList.innerHTML = ''; els.distMods.innerHTML = '';
+        els.scoreboard.innerHTML = '';
+        els.concealOverlay.hidden = true;
+        renderWordBuilder();
+        return;
+      }
+      duelPool = fullBag;
+      duelNonBlankPool = fullBag.filter(t => t.letter !== WILDCARD);
+      modSummary = { DL: 0, TL: 0, DW: 0, TW: 0 };
+    } else {
+      assignModifiers(fullBag, bagSize);
+      shuffleArr(fullBag);
+      modSummary = { DL: 0, TL: 0, DW: 0, TW: 0 };
+      for (const t of fullBag) if (t.mod) modSummary[t.mod]++;
+      currentBag = fullBag;
+    }
 
-    currentBag = fullBag;
-
-    // Initialize each player's rack from the shared bag
     for (let p = 0; p < numPlayers; p++) {
       playerRacks.push(new Array(RACK_SIZE).fill(null));
       playerSelections.push([]);
       refillRack(playerRacks[p]);
     }
 
-    // Animate player 0's initial deal
     newlyDrawnIndices = new Set();
     for (let i = 0; i < RACK_SIZE; i++) {
       if (playerRacks[0][i] !== null) newlyDrawnIndices.add(i);
@@ -1388,18 +1700,26 @@
     const r = rack();
     if (!r) return;
 
-    // If the bag is empty, this becomes a pure pass — no tiles swapped.
-    // Track consecutive passes; once everyone passes in a row, the game ends.
-    if (currentBag.length === 0) {
+    if (gameMode === 'duel') {
+      const rackTiles = r.filter(t => t !== null);
+      if (rackTiles.length === 0) return;
+      for (let i = 0; i < RACK_SIZE; i++) r[i] = null;
       playerSelections[currentPlayer] = [];
-      consecutivePasses += 1;
-      lastPlay = { player: currentPlayer, type: 'pass' };
-      clearFeedback();
+      newlyDrawnIndices = refillRack(r);
+      lastPlay = { player: currentPlayer, type: 'shuffle' };
       endTurn();
       return;
     }
 
-    // Normal swap (bag has tiles)
+    // If the classic bag is empty, this becomes a pure pass.
+    if (currentBag.length === 0) {
+      playerSelections[currentPlayer] = [];
+      consecutivePasses += 1;
+      lastPlay = { player: currentPlayer, type: 'pass' };
+      endTurn();
+      return;
+    }
+
     const rackTiles = r.filter(t => t !== null);
     if (rackTiles.length === 0) return;
     currentBag.push(...rackTiles);
@@ -1408,11 +1728,7 @@
     playerSelections[currentPlayer] = [];
     newlyDrawnIndices = refillRack(r);
 
-    lastPlay = {
-      player: currentPlayer,
-      type: 'shuffle',
-    };
-    clearFeedback();
+    lastPlay = { player: currentPlayer, type: 'shuffle' };
     endTurn();
   }
 
@@ -1424,40 +1740,62 @@
     const tiles = s.map(idx => r[idx]);
     const word = tiles.map(t => t.letter).join('');
 
-    if (word.length < MIN_WORD_LENGTH) {
-      showInvalid(`Too short (min ${MIN_WORD_LENGTH} letters)`);
-      return;
-    }
-    const resolved = resolveWord(word);
-    if (!resolved) {
-      showInvalid(`"${word}" is not a word`);
-      return;
-    }
+    const validation = getWordValidation(word);
+    if (validation.status === 'pending' || validation.status === 'invalid') return;
+    const resolved = validation.resolved ?? word;
 
     const { total: finalScore, wordMult, lengthBonus } = calcWordScore(tiles);
     playerScores[currentPlayer] += finalScore;
     playerWords[currentPlayer] += 1;
-    consecutivePasses = 0; // a real word play resets the all-pass game-end counter
+    consecutivePasses = 0;
 
-    // Record last play so the next player can see what was just played
+    let rewardMod = null;
+    if (gameMode === 'duel') {
+      const opponent = currentPlayer === 0 ? 1 : 0;
+      playerHealth[opponent] = Math.max(0, playerHealth[opponent] - finalScore);
+      rewardMod = duelRewardForLength(tiles.length);
+
+      lastPlay = {
+        player: currentPlayer,
+        target: opponent,
+        type: 'word',
+        tiles: tiles.map(t => ({ letter: t.letter, mod: t.mod })),
+        word,
+        resolved,
+        score: finalScore,
+        wordMult: 1,
+        lengthBonus,
+        rewardMod,
+        usedWildcard: word.includes(WILDCARD),
+      };
+
+      for (const idx of s) r[idx] = null;
+      newlyDrawnIndices = refillRack(r, rewardMod);
+      playerSelections[currentPlayer] = [];
+
+      if (playerHealth[opponent] <= 0) {
+        gameOver = true;
+        gameEndResult = { reason: 'knockout', winnerIdx: currentPlayer, loserIdx: opponent };
+      }
+      endTurn();
+      return;
+    }
+
     lastPlay = {
       player: currentPlayer,
       type: 'word',
       tiles: tiles.map(t => ({ letter: t.letter, mod: t.mod })),
-      word: word,
-      resolved: resolved,
+      word,
+      resolved,
       score: finalScore,
-      wordMult: wordMult,
-      lengthBonus: lengthBonus,
+      wordMult,
+      lengthBonus,
       usedWildcard: word.includes(WILDCARD),
     };
 
-    // Spend tiles and refill — animate so player sees their new tiles before conceal
     for (const idx of s) r[idx] = null;
     newlyDrawnIndices = refillRack(r);
-
     playerSelections[currentPlayer] = [];
-    clearFeedback();
     endTurn();
   }
 
@@ -1466,9 +1804,20 @@
   function endTurn() {
     if (lastPlay) history.push(lastPlay);
 
-    // Check for game end: bag must be empty, AND either current player emptied
-    // their rack, or everyone passed in a row.
-    if (currentBag.length === 0 && !gameOver) {
+    if (gameMode === 'duel' && gameOver) {
+      concealed = false;
+      endingTurn = false;
+      if (turnTimer) { clearTimeout(turnTimer); turnTimer = null; }
+      renderScoreboard();
+      renderTiles();
+      renderWordBuilder();
+      renderStats();
+      renderHistory();
+      return;
+    }
+
+    // Classic game end: bag empty and either someone went out or everyone passed.
+    if (gameMode === 'classic' && currentBag.length === 0 && !gameOver) {
       const currentRack = rack();
       if (currentRack && rackIsEmpty(currentRack)) {
         gameOver = true;
@@ -1519,25 +1868,53 @@
 
   // ────────── Rendering ──────────
 
+  function animateHealthValue(element, from, to, duration = 560) {
+    if (!element) return;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (from === to || reducedMotion) {
+      element.textContent = String(to);
+      return;
+    }
+
+    const startedAt = performance.now();
+    function frame(now) {
+      if (!element.isConnected) return;
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      element.textContent = String(Math.round(from + (to - from) * eased));
+      if (progress < 1) requestAnimationFrame(frame);
+      else element.textContent = String(to);
+    }
+    requestAnimationFrame(frame);
+  }
+
   function renderScoreboard() {
-    // Game-over banner
     if (gameOver && gameEndResult) {
-      const reason = gameEndResult.reason === 'empty_rack'
-        ? `Player ${gameEndResult.emptyPlayerIdx + 1} played their last tile.`
-        : 'The bag is empty and everyone passed.';
-      els.gameOverSubtitle.textContent = reason;
+      if (gameMode === 'duel') {
+        els.gameOverTitle.textContent = 'Duel Over';
+        els.gameOverSubtitle.textContent = `Player ${gameEndResult.winnerIdx + 1} knocked out Player ${gameEndResult.loserIdx + 1}.`;
+      } else {
+        els.gameOverTitle.textContent = 'Game Over';
+        const reason = gameEndResult.reason === 'empty_rack'
+          ? `Player ${gameEndResult.emptyPlayerIdx + 1} played their last tile.`
+          : 'The bag is empty and everyone passed.';
+        els.gameOverSubtitle.textContent = reason;
+      }
       els.gameOverBanner.hidden = false;
     } else {
       els.gameOverBanner.hidden = true;
     }
 
-    // Determine winner (highest final score) when game over
     let winnerIdx = -1;
     if (gameOver && gameEndResult) {
-      const fs = gameEndResult.finalScores;
-      let best = -Infinity;
-      for (let i = 0; i < fs.length; i++) {
-        if (fs[i] > best) { best = fs[i]; winnerIdx = i; }
+      if (gameMode === 'duel') {
+        winnerIdx = gameEndResult.winnerIdx;
+      } else {
+        const fs = gameEndResult.finalScores;
+        let best = -Infinity;
+        for (let i = 0; i < fs.length; i++) {
+          if (fs[i] > best) { best = fs[i]; winnerIdx = i; }
+        }
       }
     }
 
@@ -1547,12 +1924,57 @@
       const classes = ['player-card'];
       if (!gameOver && i === currentPlayer) classes.push('current');
       if (gameOver && i === winnerIdx) classes.push('winner');
+      if (gameMode === 'duel' && playerHealth[i] <= 0) classes.push('defeated');
       card.className = classes.join(' ');
 
-      const score = playerScores[i];
       const words = playerWords[i];
       const crown = (gameOver && i === winnerIdx) ? '<span class="winner-crown" aria-label="winner">★</span>' : '';
 
+      if (gameMode === 'duel') {
+        const health = Math.max(0, playerHealth[i] ?? DUEL_STARTING_HEALTH);
+        const previousHealth = Math.max(0, renderedPlayerHealth[i] ?? health);
+        const healthPercent = Math.max(0, Math.min(100, (health / DUEL_STARTING_HEALTH) * 100));
+        const previousHealthPercent = Math.max(0, Math.min(100, (previousHealth / DUEL_STARTING_HEALTH) * 100));
+        const tookDamage = health < previousHealth;
+        if (tookDamage) card.classList.add('damaged');
+
+        card.innerHTML = `
+          <div class="player-name">
+            <span class="turn-dot" aria-hidden="true"></span>
+            Player ${i + 1}${crown}
+          </div>
+          <div class="health-row">
+            <span class="health-value">${previousHealth}</span>
+            <span class="health-unit">/ ${DUEL_STARTING_HEALTH} HP</span>
+          </div>
+          <div class="health-track" role="progressbar" aria-label="Player ${i + 1} health" aria-valuemin="0" aria-valuemax="${DUEL_STARTING_HEALTH}" aria-valuenow="${health}">
+            <div class="health-fill" style="width:${previousHealthPercent}%"></div>
+          </div>
+          <div class="duel-substats">
+            <span>${words} word${words === 1 ? '' : 's'}</span>
+            <span>${playerScores[i]} damage dealt</span>
+          </div>
+        `;
+        els.scoreboard.appendChild(card);
+
+        const healthFill = card.querySelector('.health-fill');
+        const healthValue = card.querySelector('.health-value');
+        if (tookDamage) {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              if (healthFill?.isConnected) healthFill.style.width = `${healthPercent}%`;
+              animateHealthValue(healthValue, previousHealth, health);
+            });
+          });
+        } else {
+          healthFill.style.width = `${healthPercent}%`;
+          healthValue.textContent = String(health);
+        }
+        renderedPlayerHealth[i] = health;
+        continue;
+      }
+
+      const score = playerScores[i];
       let endBlock = '';
       if (gameOver && gameEndResult) {
         const penalty = gameEndResult.penalties[i];
@@ -1560,12 +1982,9 @@
         const lines = [];
 
         if (isEmptier) {
-          // This player went out: no own penalty, gains bonus from others
           let bonus = 0;
           for (let j = 0; j < numPlayers; j++) if (j !== i) bonus += gameEndResult.penalties[j];
-          if (bonus > 0) {
-            lines.push(`<span class="player-penalty-line bonus">+${bonus} bonus from leftover tiles</span>`);
-          }
+          if (bonus > 0) lines.push(`<span class="player-penalty-line bonus">+${bonus} bonus from leftover tiles</span>`);
         } else if (penalty > 0) {
           lines.push(`<span class="player-penalty-line">−${penalty} from leftover tiles</span>`);
         }
@@ -1597,17 +2016,23 @@
     if (!currentDist) return;
     const r = rack();
     const inRack = r ? r.filter(t => t !== null).length : 0;
-    const inBag = currentBag.length;
+    if (gameMode === 'duel') {
+      els.stats.innerHTML = `
+        <span class="stat"><strong>${inRack}</strong> in rack</span>
+        <span class="stat"><strong>∞</strong> bag</span>
+        <span class="stat"><strong>${duelPool.length}</strong>-tile distribution pool</span>
+      `;
+      return;
+    }
     els.stats.innerHTML = `
       <span class="stat"><strong>${inRack}</strong> in rack</span>
-      <span class="stat"><strong>${inBag}</strong> in bag</span>
+      <span class="stat"><strong>${currentBag.length}</strong> in bag</span>
     `;
   }
 
   function renderTiles() {
     els.tileGrid.innerHTML = '';
 
-    // Always render 16 tile slots so layout stays stable behind the conceal overlay
     const r = rack();
     const s = sel();
     const showActual = !concealed && r;
@@ -1619,10 +2044,10 @@
         const selPos = s.indexOf(i);
         const isSelected = selPos >= 0;
         const shouldAnimate = newlyDrawnIndices.has(i);
-        const modClass = data.mod ? ` has-mod mod-${data.mod.toLowerCase()}` : '';
+        const modClass = data.mod ? ` has-mod mod-${modifierClass(data.mod)}` : '';
         tile.className = 'tile' + modClass + (isSelected ? ' selected' : '') + (shouldAnimate ? ' animate' : '');
         if (shouldAnimate) tile.style.animationDelay = `${i * 28}ms`;
-        const modLabel = data.mod ? `<span class="tile-mod-label">${data.mod}</span>` : '';
+        const modLabel = data.mod ? `<span class="tile-mod-label">${modifierLabel(data.mod)}</span>` : '';
         const isWildcard = data.letter === WILDCARD;
         const letterHtml = isWildcard ? '' : data.letter;
         const ptsHtml = isWildcard ? '' : `<span class="tile-pts">${tileDisplayedScore(data)}</span>`;
@@ -1635,7 +2060,6 @@
     }
     newlyDrawnIndices = new Set();
 
-    // Toggle conceal overlay
     if (concealed) {
       els.concealPlayerNum.textContent = String(currentPlayer + 1);
       els.concealOverlay.hidden = false;
@@ -1659,6 +2083,24 @@
       item.innerHTML = `<span class="l">${letter}</span><span class="c">${count}</span>`;
       els.distList.appendChild(item);
     }
+
+    if (gameMode === 'duel') {
+      const duelSpecials = [
+        { mod: 'X2', value: '1/48 · 7–8 reward', title: 'Natural draw; also guaranteed after a 7–8 letter word' },
+        { mod: 'X3', value: '1/96 · 9 reward', title: 'Natural draw; also guaranteed after a 9 letter word' },
+        { mod: 'X4', value: '10 reward', title: 'Guaranteed draw after a 10 letter word' },
+        { mod: 'X5', value: '11+ reward', title: 'Guaranteed draw after an 11+ letter word' },
+      ];
+      for (const special of duelSpecials) {
+        const item = document.createElement('div');
+        item.className = `dist-mod dist-mod-${modifierClass(special.mod)}`;
+        item.innerHTML = `<span class="tag">${modifierLabel(special.mod)}</span><span class="c">${special.value}</span>`;
+        item.title = special.title;
+        els.distMods.appendChild(item);
+      }
+      return;
+    }
+
     for (const modType of ['DL', 'TL', 'DW', 'TW']) {
       const item = document.createElement('div');
       item.className = `dist-mod dist-mod-${modType.toLowerCase()}`;
@@ -1680,7 +2122,6 @@
     }
     els.historySection.hidden = false;
     let html = '';
-    // Most recent first
     for (let i = history.length - 1; i >= 0; i--) {
       const entry = history[i];
       const turnNum = i + 1;
@@ -1699,26 +2140,25 @@
           <span class="history-score"></span>
         </div>`;
       } else {
-        const mult = entry.wordMult > 1 ? ` <span class="mult">×${entry.wordMult}</span>` : '';
+        const mult = gameMode === 'classic' && entry.wordMult > 1 ? ` <span class="mult">×${entry.wordMult}</span>` : '';
         const bonus = entry.lengthBonus > 0 ? ` <span class="bonus">+${entry.lengthBonus}</span>` : '';
+        const reward = entry.rewardMod ? ` <span class="bonus">→ ${modifierLabel(entry.rewardMod)} draw</span>` : '';
         let tilesHtml = '';
         for (const tile of entry.tiles) {
-          const modChip = tile.mod
-            ? `<span class="word-mod ${tile.mod.toLowerCase()}">${tile.mod}</span>`
-            : `<span class="word-mod-spacer"></span>`;
           tilesHtml += `<span class="word-letter">
             <span class="letter">${tile.letter}</span>
-            ${modChip}
+            ${modifierChip(tile)}
           </span>`;
         }
         const resolved = entry.usedWildcard && entry.resolved !== entry.word
           ? `<span class="history-resolved">→ ${entry.resolved}</span>`
           : '';
+        const unit = gameMode === 'duel' ? 'dmg' : `pt${entry.score === 1 ? '' : 's'}`;
         html += `<div class="history-entry">
           <span class="history-turn">${turnNum}</span>
           <span class="history-player">Player ${entry.player + 1}</span>
           <div class="word-letters compact">${tilesHtml}${resolved}</div>
-          <span class="history-score">${entry.score} pt${entry.score === 1 ? '' : 's'}${mult}${bonus}</span>
+          <span class="history-score">${entry.score} ${unit}${mult}${bonus}${reward}</span>
         </div>`;
       }
     }
@@ -1735,8 +2175,7 @@
     els.wordEmpty.classList.remove('last-play', 'last-play-label');
     els.shuffleRackBtn.disabled = gameOver || concealed || endingTurn || !currentDist;
 
-    // When bag is empty, the swap action becomes a pure pass.
-    if (currentBag.length === 0 && currentDist) {
+    if (gameMode === 'classic' && currentBag.length === 0 && currentDist) {
       els.shuffleRackLabel.textContent = 'Pass';
     } else {
       els.shuffleRackLabel.textContent = 'Swap & pass';
@@ -1745,9 +2184,8 @@
     if (gameOver) {
       els.clearBtn.disabled = true;
       els.submitBtn.disabled = true;
-      // Stay in whatever mode; just suppress the WIP-builder UI elements
       els.wordEmpty.style.display = '';
-      els.wordEmpty.innerHTML = '<em>Game over — start a new game above</em>';
+      els.wordEmpty.innerHTML = `<em>${gameMode === 'duel' ? 'Duel' : 'Game'} over — start a new game above</em>`;
       els.wordLetters.style.display = 'none';
       els.wordLetters.innerHTML = '';
       els.wordScore.innerHTML = '';
@@ -1755,11 +2193,9 @@
     }
 
     if (hasWIP) {
-      // Current player building a word
       els.wordEmpty.style.display = 'none';
       els.wordLetters.style.display = 'flex';
       els.clearBtn.disabled = endingTurn;
-      els.submitBtn.disabled = endingTurn;
       els.wordBuilder.classList.add('has-word');
 
       const tiles = s.map(idx => r[idx]);
@@ -1767,20 +2203,25 @@
       for (let i = 0; i < s.length; i++) {
         const idx = s[i];
         const tile = tiles[i];
-        const modChip = tile.mod
-          ? `<span class="word-mod ${tile.mod.toLowerCase()}">${tile.mod}</span>`
-          : `<span class="word-mod-spacer"></span>`;
         html += `<span class="word-letter" data-idx="${idx}" title="Click to remove">
           <span class="letter">${tile.letter}</span>
-          ${modChip}
+          ${modifierChip(tile)}
         </span>`;
       }
       els.wordLetters.innerHTML = html;
 
+      const word = tiles.map(t => t.letter).join('');
+      const validation = getWordValidation(word);
+      const cannotSubmit = validation.status === 'invalid' || validation.status === 'pending';
+      els.submitBtn.disabled = endingTurn || cannotSubmit;
+
       const { total, wordMult, lengthBonus } = calcWordScore(tiles);
-      const multIndicator = wordMult > 1 ? `<span class="mult">×${wordMult}</span>` : '';
+      const multIndicator = gameMode === 'classic' && wordMult > 1 ? `<span class="mult">×${wordMult}</span>` : '';
       const bonusIndicator = lengthBonus > 0 ? `<span class="bonus">+${lengthBonus}</span>` : '';
-      els.wordScore.innerHTML = `${total}<span class="unit">pt${total === 1 ? '' : 's'}</span>${multIndicator}${bonusIndicator}`;
+      const pendingReward = gameMode === 'duel' ? duelRewardForLength(tiles.length) : null;
+      const rewardIndicator = pendingReward ? `<span class="bonus">→ ${modifierLabel(pendingReward)} draw</span>` : '';
+      const unit = gameMode === 'duel' ? 'dmg' : `pt${total === 1 ? '' : 's'}`;
+      els.wordScore.innerHTML = `${total}<span class="unit">${unit}</span>${multIndicator}${bonusIndicator}${rewardIndicator}`;
 
       els.wordLetters.querySelectorAll('.word-letter').forEach(el => {
         el.addEventListener('click', () => toggleTile(Number(el.dataset.idx)));
@@ -1812,32 +2253,33 @@
         return;
       }
 
-      // Word play: show actual tiles + score
       const resolvedSuffix = lp.usedWildcard && lp.resolved !== lp.word
         ? ` <span class="resolved">→ ${lp.resolved}</span>`
         : '';
-      els.wordEmpty.innerHTML = `Player ${lp.player + 1} played${resolvedSuffix}`;
+      if (gameMode === 'duel') {
+        els.wordEmpty.innerHTML = `Player ${lp.player + 1} attacked Player ${lp.target + 1}${resolvedSuffix}`;
+      } else {
+        els.wordEmpty.innerHTML = `Player ${lp.player + 1} played${resolvedSuffix}`;
+      }
 
       els.wordLetters.style.display = 'flex';
       let html = '';
       for (const tile of lp.tiles) {
-        const modChip = tile.mod
-          ? `<span class="word-mod ${tile.mod.toLowerCase()}">${tile.mod}</span>`
-          : `<span class="word-mod-spacer"></span>`;
         html += `<span class="word-letter readonly">
           <span class="letter">${tile.letter}</span>
-          ${modChip}
+          ${modifierChip(tile)}
         </span>`;
       }
       els.wordLetters.innerHTML = html;
 
-      const multIndicator = lp.wordMult > 1 ? `<span class="mult">×${lp.wordMult}</span>` : '';
+      const multIndicator = gameMode === 'classic' && lp.wordMult > 1 ? `<span class="mult">×${lp.wordMult}</span>` : '';
       const bonusIndicator = lp.lengthBonus > 0 ? `<span class="bonus">+${lp.lengthBonus}</span>` : '';
-      els.wordScore.innerHTML = `${lp.score}<span class="unit">pt${lp.score === 1 ? '' : 's'}</span>${multIndicator}${bonusIndicator}`;
+      const rewardIndicator = lp.rewardMod ? `<span class="bonus">→ ${modifierLabel(lp.rewardMod)} draw</span>` : '';
+      const unit = gameMode === 'duel' ? 'dmg' : `pt${lp.score === 1 ? '' : 's'}`;
+      els.wordScore.innerHTML = `${lp.score}<span class="unit">${unit}</span>${multIndicator}${bonusIndicator}${rewardIndicator}`;
       return;
     }
 
-    // Empty state (no WIP, no lastPlay — only at game start)
     els.wordEmpty.style.display = '';
     els.wordEmpty.innerHTML = 'Click tiles to build a word';
     els.wordLetters.style.display = 'none';
@@ -1847,38 +2289,7 @@
     els.submitBtn.disabled = true;
   }
 
-  // ────────── Feedback ──────────
-
-  function clearFeedback() {
-    els.wordFeedback.classList.remove('show', 'success');
-    els.wordFeedback.textContent = '';
-    els.wordBuilder.classList.remove('invalid');
-  }
-
-  let feedbackTimer = null;
-  function showInvalid(reason) {
-    els.wordFeedback.classList.remove('success');
-    els.wordFeedback.textContent = reason;
-    els.wordFeedback.classList.add('show');
-    els.wordBuilder.classList.remove('invalid');
-    void els.wordBuilder.offsetWidth;
-    els.wordBuilder.classList.add('invalid');
-    if (feedbackTimer) clearTimeout(feedbackTimer);
-    feedbackTimer = setTimeout(() => {
-      els.wordFeedback.classList.remove('show');
-      els.wordBuilder.classList.remove('invalid');
-    }, 2400);
-  }
-
-  function showWildcardSuccess(played, resolved) {
-    els.wordFeedback.classList.add('success');
-    els.wordFeedback.textContent = `played ${played} as ${resolved}`;
-    els.wordFeedback.classList.add('show');
-    if (feedbackTimer) clearTimeout(feedbackTimer);
-    feedbackTimer = setTimeout(() => {
-      els.wordFeedback.classList.remove('show');
-    }, 2800);
-  }
+  // ────────── Tile selection ──────────
 
   function toggleTile(idx) {
     if (gameOver) return;
@@ -1887,7 +2298,6 @@
     const r = rack();
     const s = sel();
     if (!r || !r[idx]) return;
-    clearFeedback();
     const pos = s.indexOf(idx);
     if (pos >= 0) s.splice(pos, 1);
     else s.push(idx);
@@ -1899,7 +2309,6 @@
     if (gameOver || concealed || endingTurn) return;
     const s = sel();
     if (!s || s.length === 0) return;
-    clearFeedback();
     playerSelections[currentPlayer] = [];
     renderTiles();
     renderWordBuilder();
@@ -1911,18 +2320,28 @@
   els.shuffleRackBtn.addEventListener('click', shuffleRack);
   els.clearBtn.addEventListener('click', clearWord);
   els.submitBtn.addEventListener('click', submitWord);
-  els.bagSize.addEventListener('input', startNewGame);
-  els.minPerLetter.addEventListener('input', startNewGame);
+  // Numeric settings apply only when starting a new game; leaving a field just normalizes it.
+  els.bagSize.addEventListener('change', readGameSettings);
+  els.minPerLetter.addEventListener('change', readGameSettings);
   els.concealOverlay.addEventListener('click', revealRack);
   els.concealOverlay.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); revealRack(); }
   });
-  els.playerCountGroup.addEventListener('click', (e) => {
+  els.modeGroup.addEventListener('click', (e) => {
     const btn = e.target.closest('.seg-btn');
     if (!btn) return;
+    const mode = btn.dataset.mode;
+    if (mode === gameMode) return;
+    setGameMode(mode);
+    startNewGame();
+  });
+  els.playerCountGroup.addEventListener('click', (e) => {
+    const btn = e.target.closest('.seg-btn');
+    if (!btn || btn.disabled || gameMode === 'duel') return;
     const n = Number(btn.dataset.count);
     if (n === numPlayers) return;
     setNumPlayers(n);
+    els.bagSize.value = String(DEFAULT_BAG_BY_PLAYERS[n]);
     startNewGame();
   });
   document.addEventListener('keydown', (e) => {
@@ -1933,12 +2352,17 @@
       return;
     }
     if (endingTurn) return;
-    if (e.key === 'Enter') { e.preventDefault(); submitWord(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!els.submitBtn.disabled) submitWord();
+    }
     else if (e.key === 'Escape' || e.key === 'Backspace') { e.preventDefault(); clearWord(); }
     else if (e.key === ' ') { e.preventDefault(); shuffleRack(); }
   });
 
+  setGameMode('classic');
   setNumPlayers(DEFAULT_PLAYERS);
+  els.bagSize.value = String(DEFAULT_BAG_BY_PLAYERS[DEFAULT_PLAYERS]);
   loadDictionary();
   startNewGame();
 </script>
