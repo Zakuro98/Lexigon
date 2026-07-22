@@ -1121,7 +1121,7 @@
   const WORD_MULTS = new Set(['DW', 'TW']);
   const DUEL_MODS = new Set(['X2', 'X3', 'X4', 'X5']);
   const DUEL_STARTING_HEALTH = 200;
-  const DUEL_POOL_SIZE = 256;
+  const DUEL_POOL_SIZE = 160;
   const RACK_SIZE = 16;
   const MIN_WORD_LENGTH = 1;
   const DEFAULT_PLAYERS = 2;
@@ -1133,7 +1133,7 @@
   // ────────── Bag construction ──────────
 
   function makeDuelDistribution() {
-    // Duel samples with replacement from a fixed 256-tile virtual bag.
+    // Duel uses a replenishing 160-tile letter bag. Special multipliers are rolled separately.
     return makeTileDistribution(DUEL_POOL_SIZE, 1);
   }
 
@@ -1382,29 +1382,27 @@
     return total;
   }
 
-  function sampleDuelLetter(nonBlankOnly = false) {
-    const total = duelDistributionTotal(nonBlankOnly);
-    if (total <= 0) return null;
-
-    let roll = Math.random() * total;
-    for (const [letter, count] of Object.entries(currentDist)) {
-      if (nonBlankOnly && letter === WILDCARD) continue;
-      if (roll < count) return letter;
-      roll -= count;
-    }
-    return null;
+  function refillDuelBag() {
+    if (!currentDist) return false;
+    currentBag = makeBag(currentDist);
+    shuffleArr(currentBag);
+    return currentBag.length > 0;
   }
 
-  function drawDuelTile(guaranteedMod = null) {
-    if (guaranteedMod) {
-      const letter = sampleDuelLetter(true);
-      return letter ? { letter, mod: guaranteedMod } : null;
-    }
+  function drawDuelLetter() {
+    if (currentBag.length === 0 && !refillDuelBag()) return null;
+    const tile = currentBag.pop();
+    return tile ? tile.letter : null;
+  }
 
-    // Pick the letter directly from the distribution pool first, with replacement.
-    // Blanks keep their exact pool frequency and can never carry a multiplier.
-    const letter = sampleDuelLetter(false);
+  function drawDuelTile() {
+    // Letters are consumed from a shuffled 160-tile bag. When it empties,
+    // a fresh bag with the same distribution is generated and shuffled.
+    const letter = drawDuelLetter();
     if (!letter) return null;
+
+    // Special multipliers remain independent random rolls rather than being
+    // preassigned to the bag. Blanks can never carry a multiplier.
     if (letter === WILDCARD) return { letter, mod: null };
 
     // Slightly raise the conditional odds on nonblank letters so the overall
@@ -1427,15 +1425,27 @@
       for (let i = 0; i < RACK_SIZE; i++) {
         if (targetRack[i] === null) emptyIndices.push(i);
       }
-      const rewardIndex = guaranteedMod && emptyIndices.length > 0
-        ? emptyIndices[Math.floor(Math.random() * emptyIndices.length)]
-        : -1;
 
+      // Draw every replacement letter normally from the replenishing bag.
+      // Natural X2/X3 rolls remain independent on each nonblank tile.
       for (const i of emptyIndices) {
-        const tile = drawDuelTile(i === rewardIndex ? guaranteedMod : null);
+        const tile = drawDuelTile();
         if (tile) {
           targetRack[i] = tile;
           newIndices.add(i);
+        }
+      }
+
+      // A long-word reward upgrades one random nonblank replacement tile.
+      // Because rewards require at least seven played tiles and a 160-tile bag
+      // contains only a few blanks, there will always be an eligible draw.
+      if (guaranteedMod) {
+        const rewardCandidates = emptyIndices.filter(i =>
+          targetRack[i] && targetRack[i].letter !== WILDCARD
+        );
+        if (rewardCandidates.length > 0) {
+          const rewardIndex = rewardCandidates[Math.floor(Math.random() * rewardCandidates.length)];
+          targetRack[rewardIndex].mod = guaranteedMod;
         }
       }
       return newIndices;
@@ -1723,6 +1733,7 @@
         return;
       }
       modSummary = { DL: 0, TL: 0, DW: 0, TW: 0 };
+      refillDuelBag();
     } else {
       const fullBag = makeBag(dist);
       assignModifiers(fullBag, bagSize);
@@ -2075,7 +2086,7 @@
     if (gameMode === 'duel') {
       els.stats.innerHTML = `
         <span class="stat"><strong>${inRack}</strong> in rack</span>
-        <span class="stat"><strong>∞</strong> draws</span>
+        <span class="stat"><strong>∞</strong> in bag</span>
       `;
       return;
     }
