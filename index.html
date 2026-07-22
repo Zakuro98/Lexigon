@@ -1259,10 +1259,10 @@
   }
 
   function duelRewardForLength(length) {
-    if (length >= 11) return 'X5';
-    if (length === 10) return 'X4';
-    if (length === 9) return 'X3';
-    if (length >= 7) return 'X2';
+    if (length >= 10) return 'X5';
+    if (length === 9) return 'X4';
+    if (length === 8) return 'X3';
+    if (length === 7) return 'X2';
     return null;
   }
 
@@ -1351,10 +1351,10 @@
     if (letter === WILDCARD) return { letter, mod: null };
 
     // Slightly raise the conditional odds on nonblank letters so the overall
-    // natural rates remain exactly X2 = 1/48 and X3 = 1/96 across all draws.
+    // natural rates remain exactly X2 = 1/32 and X3 = 1/64 across all draws.
     const nonBlankRate = duelNonBlankPool.length / duelPool.length;
-    const x3Rate = Math.min(1, (1 / 96) / nonBlankRate);
-    const x2Rate = Math.min(1 - x3Rate, (1 / 48) / nonBlankRate);
+    const x3Rate = Math.min(1, (1 / 64) / nonBlankRate);
+    const x2Rate = Math.min(1 - x3Rate, (1 / 32) / nonBlankRate);
     const roll = Math.random();
     const mod = roll < x3Rate ? 'X3'
               : roll < x3Rate + x2Rate ? 'X2'
@@ -2086,10 +2086,10 @@
 
     if (gameMode === 'duel') {
       const duelSpecials = [
-        { mod: 'X2', value: '1/48 · 7–8 reward', title: 'Natural draw; also guaranteed after a 7–8 letter word' },
-        { mod: 'X3', value: '1/96 · 9 reward', title: 'Natural draw; also guaranteed after a 9 letter word' },
-        { mod: 'X4', value: '10 reward', title: 'Guaranteed draw after a 10 letter word' },
-        { mod: 'X5', value: '11+ reward', title: 'Guaranteed draw after an 11+ letter word' },
+        { mod: 'X2', value: '1/32 · 7 reward', title: 'Natural draw; also guaranteed after a 7 letter word' },
+        { mod: 'X3', value: '1/64 · 8 reward', title: 'Natural draw; also guaranteed after an 8 letter word' },
+        { mod: 'X4', value: '9 reward', title: 'Guaranteed draw after a 9 letter word' },
+        { mod: 'X5', value: '10+ reward', title: 'Guaranteed draw after a 10+ letter word' },
       ];
       for (const special of duelSpecials) {
         const item = document.createElement('div');
