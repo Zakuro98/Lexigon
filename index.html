@@ -462,10 +462,17 @@
   .word-mod.tl { background: var(--mod-tl); }
   .word-mod.dw { background: var(--mod-dw); }
   .word-mod.tw { background: var(--mod-tw); }
+  .word-mod.x2,
+  .word-mod.x3,
+  .word-mod.x4,
+  .word-mod.x5 {
+    width: 22px;
+    padding: 0;
+  }
   .word-mod.x2 { background: var(--duel-x2); }
   .word-mod.x3 { background: var(--duel-x3); }
   .word-mod.x4 { background: var(--duel-x4); }
-  .word-mod.x5 { background: linear-gradient(135deg, var(--duel-x5), var(--duel-x5-deep)); color: #3A2100; }
+  .word-mod.x5 { background: linear-gradient(135deg, var(--duel-x5), var(--duel-x5-deep)); }
 
   .word-empty { color: var(--text-tertiary); font-size: 14px; font-style: italic; }
 
@@ -1160,7 +1167,7 @@
   // ────────── Bag construction ──────────
 
   function makeDuelDistribution() {
-    // Duel uses a replenishing 160-tile letter bag. Special multipliers are rolled separately.
+    // Duel uses a replenishing 160-tile letter bag. Special word boosts are rolled separately.
     return makeTileDistribution(DUEL_POOL_SIZE, 1);
   }
 
@@ -1257,14 +1264,15 @@
 
   // ────────── Score & display helpers ──────────
 
-  function duelMultiplier(mod) {
-    if (!mod || !DUEL_MODS.has(mod)) return 1;
-    return Number(mod.slice(1));
+  const DUEL_BOOST_PERCENTS = { X2: 10, X3: 20, X4: 30, X5: 50 };
+
+  function duelBoostPercent(mod) {
+    return mod && DUEL_MODS.has(mod) ? (DUEL_BOOST_PERCENTS[mod] || 0) : 0;
   }
 
   function modifierLabel(mod) {
     if (!mod) return '';
-    if (DUEL_MODS.has(mod)) return `${duelMultiplier(mod)}×`;
+    if (DUEL_MODS.has(mod)) return `+${duelBoostPercent(mod)}%`;
     return mod;
   }
 
@@ -1273,9 +1281,9 @@
   }
 
   function modifierChip(tile) {
-    return tile.mod
-      ? `<span class="word-mod ${modifierClass(tile.mod)}">${modifierLabel(tile.mod)}</span>`
-      : `<span class="word-mod-spacer"></span>`;
+    if (!tile.mod) return `<span class="word-mod-spacer"></span>`;
+    const label = DUEL_MODS.has(tile.mod) ? '' : modifierLabel(tile.mod);
+    return `<span class="word-mod ${modifierClass(tile.mod)}">${label}</span>`;
   }
 
   function duelBaseValue(letter) {
@@ -1291,11 +1299,10 @@
   }
 
   // Score/damage that shows in the corner of an individual tile.
+  // Duel special tiles boost the whole word, so their individual corner value stays at base damage.
   function tileDisplayedScore(tile) {
     let score = gameMode === 'duel' ? duelBaseValue(tile.letter) : POINTS[tile.letter];
-    if (gameMode === 'duel') {
-      score *= duelMultiplier(tile.mod);
-    } else {
+    if (gameMode !== 'duel') {
       if (tile.mod === 'DL') score *= 2;
       else if (tile.mod === 'TL') score *= 3;
     }
@@ -1305,10 +1312,11 @@
   function calcWordScore(tiles) {
     let letterSum = 0;
     let wordMult = 1;
+    let boostPercent = 0;
     for (const tile of tiles) {
       let pts = gameMode === 'duel' ? duelBaseValue(tile.letter) : POINTS[tile.letter];
       if (gameMode === 'duel') {
-        pts *= duelMultiplier(tile.mod);
+        boostPercent += duelBoostPercent(tile.mod);
       } else {
         if (tile.mod === 'DL') pts *= 2;
         else if (tile.mod === 'TL') pts *= 3;
@@ -1322,7 +1330,14 @@
     const lengthBonus = gameMode === 'duel'
       ? Math.round(baseLengthBonus * 0.6)
       : baseLengthBonus;
-    return { letterSum, wordMult, lengthBonus, total: letterSum * wordMult + lengthBonus };
+
+    if (gameMode === 'duel') {
+      const baseDamage = letterSum + lengthBonus;
+      const total = Math.round(baseDamage * (1 + boostPercent / 100));
+      return { letterSum, wordMult: 1, lengthBonus, boostPercent, total };
+    }
+
+    return { letterSum, wordMult, lengthBonus, boostPercent: 0, total: letterSum * wordMult + lengthBonus };
   }
 
   function duelRewardForLength(length) {
@@ -1428,18 +1443,12 @@
     const letter = drawDuelLetter();
     if (!letter) return null;
 
-    // Special multipliers remain independent random rolls rather than being
-    // preassigned to the bag. Blanks can never carry a multiplier.
-    if (letter === WILDCARD) return { letter, mod: null };
-
-    // Slightly raise the conditional odds on nonblank letters so the overall
-    // natural rates remain exactly X2 = 1/32 and X3 = 1/64 across all draws.
-    const nonBlankRate = duelDistributionTotal(true) / duelDistributionTotal(false);
-    const x3Rate = Math.min(1, (1 / 64) / nonBlankRate);
-    const x2Rate = Math.min(1 - x3Rate, (1 / 32) / nonBlankRate);
+    // Special word-damage boosts remain independent random rolls rather than
+    // being preassigned to the bag. Blanks can carry boosts because the bonus
+    // applies to the whole word rather than the individual letter.
     const roll = Math.random();
-    const mod = roll < x3Rate ? 'X3'
-              : roll < x3Rate + x2Rate ? 'X2'
+    const mod = roll < (1 / 64) ? 'X3'
+              : roll < (1 / 64) + (1 / 32) ? 'X2'
               : null;
     return { letter, mod };
   }
@@ -1454,7 +1463,7 @@
       }
 
       // Draw every replacement letter normally from the replenishing bag.
-      // Natural X2/X3 rolls remain independent on each nonblank tile.
+      // Natural blue/purple boost rolls remain independent on every tile.
       for (const i of emptyIndices) {
         const tile = drawDuelTile();
         if (tile) {
@@ -1463,13 +1472,10 @@
         }
       }
 
-      // A long-word reward upgrades one random nonblank replacement tile.
-      // Because rewards require at least seven played tiles and a 160-tile bag
-      // contains only a few blanks, there will always be an eligible draw.
+      // A long-word reward upgrades one random replacement tile.
+      // Blanks are valid recipients because these boosts apply to the whole word.
       if (guaranteedMod) {
-        const rewardCandidates = emptyIndices.filter(i =>
-          targetRack[i] && targetRack[i].letter !== WILDCARD
-        );
+        const rewardCandidates = emptyIndices.filter(i => targetRack[i]);
         if (rewardCandidates.length > 0) {
           const rewardIndex = rewardCandidates[Math.floor(Math.random() * rewardCandidates.length)];
           targetRack[rewardIndex].mod = guaranteedMod;
@@ -1850,7 +1856,7 @@
     if (validation.status === 'pending' || validation.status === 'invalid') return;
     const resolved = validation.resolved ?? word;
 
-    const { total: finalScore, wordMult, lengthBonus } = calcWordScore(tiles);
+    const { total: finalScore, wordMult, lengthBonus, boostPercent } = calcWordScore(tiles);
     playerScores[currentPlayer] += finalScore;
     playerWords[currentPlayer] += 1;
     consecutivePasses = 0;
@@ -1871,6 +1877,7 @@
         score: finalScore,
         wordMult: 1,
         lengthBonus,
+        boostPercent,
         rewardMod,
         usedWildcard: word.includes(WILDCARD),
       };
@@ -2154,7 +2161,9 @@
         const modClass = data.mod ? ` has-mod mod-${modifierClass(data.mod)}` : '';
         tile.className = 'tile' + modClass + (isSelected ? ' selected' : '') + (shouldAnimate ? ' animate' : '');
         if (shouldAnimate) tile.style.animationDelay = `${i * 28}ms`;
-        const modLabel = data.mod ? `<span class="tile-mod-label">${modifierLabel(data.mod)}</span>` : '';
+        const modLabel = data.mod && gameMode !== 'duel'
+          ? `<span class="tile-mod-label">${modifierLabel(data.mod)}</span>`
+          : '';
         const isWildcard = data.letter === WILDCARD;
         const letterHtml = isWildcard ? '' : data.letter;
         const ptsHtml = isWildcard ? '' : `<span class="tile-pts">${tileDisplayedScore(data)}</span>`;
@@ -2194,10 +2203,10 @@
 
     if (gameMode === 'duel') {
       const duelSpecials = [
-        { mod: 'X2', value: '1/32 · 7 reward', title: 'Natural draw; also guaranteed after a 7 letter word' },
-        { mod: 'X3', value: '1/64 · 8 reward', title: 'Natural draw; also guaranteed after an 8 letter word' },
-        { mod: 'X4', value: '9 reward', title: 'Guaranteed draw after a 9 letter word' },
-        { mod: 'X5', value: '10+ reward', title: 'Guaranteed draw after a 10+ letter word' },
+        { mod: 'X2', value: '1/32 · 7 reward', title: '+10% whole-word damage; natural draw and guaranteed after a 7 letter word' },
+        { mod: 'X3', value: '1/64 · 8 reward', title: '+20% whole-word damage; natural draw and guaranteed after an 8 letter word' },
+        { mod: 'X4', value: '9 reward', title: '+30% whole-word damage; guaranteed after a 9 letter word' },
+        { mod: 'X5', value: '10+ reward', title: '+50% whole-word damage; guaranteed after a 10+ letter word' },
       ];
       for (const special of duelSpecials) {
         const item = document.createElement('div');
@@ -2249,6 +2258,9 @@
         </div>`;
       } else {
         const mult = gameMode === 'classic' && entry.wordMult > 1 ? ` <span class="mult">×${entry.wordMult}</span>` : '';
+        const boost = gameMode === 'duel' && (entry.boostPercent || 0) > 0
+          ? ` <span class="mult">+${entry.boostPercent}%</span>`
+          : '';
         const bonus = entry.lengthBonus > 0 ? ` <span class="bonus">+${entry.lengthBonus}</span>` : '';
         let tilesHtml = '';
         for (const tile of entry.tiles) {
@@ -2265,7 +2277,7 @@
           <span class="history-turn">${turnNum}</span>
           <span class="history-player">Player ${entry.player + 1}</span>
           <div class="word-letters compact">${tilesHtml}${resolved}</div>
-          <span class="history-score">${entry.score} ${unit}${mult}${bonus}</span>
+          <span class="history-score">${entry.score} ${unit}${mult}${boost}${bonus}</span>
         </div>`;
       }
     }
@@ -2322,12 +2334,12 @@
       const cannotSubmit = validation.status === 'invalid' || validation.status === 'pending';
       els.submitBtn.disabled = endingTurn || cannotSubmit;
 
-      const { total, wordMult, lengthBonus } = calcWordScore(tiles);
+      const { total, wordMult, lengthBonus, boostPercent } = calcWordScore(tiles);
       const multIndicator = gameMode === 'classic' && wordMult > 1 ? `<span class="mult">×${wordMult}</span>` : '';
+      const boostIndicator = gameMode === 'duel' && boostPercent > 0 ? `<span class="mult">+${boostPercent}%</span>` : '';
       const bonusIndicator = lengthBonus > 0 ? `<span class="bonus">+${lengthBonus}</span>` : '';
-      const pendingReward = gameMode === 'duel' ? duelRewardForLength(tiles.length) : null;
       const unit = gameMode === 'duel' ? 'dmg' : `pt${total === 1 ? '' : 's'}`;
-      els.wordScore.innerHTML = `${total}<span class="unit">${unit}</span>${multIndicator}${bonusIndicator}`;
+      els.wordScore.innerHTML = `${total}<span class="unit">${unit}</span>${multIndicator}${boostIndicator}${bonusIndicator}`;
 
       els.wordLetters.querySelectorAll('.word-letter').forEach(el => {
         el.addEventListener('click', () => toggleTile(Number(el.dataset.idx)));
@@ -2379,9 +2391,12 @@
       els.wordLetters.innerHTML = html;
 
       const multIndicator = gameMode === 'classic' && lp.wordMult > 1 ? `<span class="mult">×${lp.wordMult}</span>` : '';
+      const boostIndicator = gameMode === 'duel' && (lp.boostPercent || 0) > 0
+        ? `<span class="mult">+${lp.boostPercent}%</span>`
+        : '';
       const bonusIndicator = lp.lengthBonus > 0 ? `<span class="bonus">+${lp.lengthBonus}</span>` : '';
       const unit = gameMode === 'duel' ? 'dmg' : `pt${lp.score === 1 ? '' : 's'}`;
-      els.wordScore.innerHTML = `${lp.score}<span class="unit">${unit}</span>${multIndicator}${bonusIndicator}`;
+      els.wordScore.innerHTML = `${lp.score}<span class="unit">${unit}</span>${multIndicator}${boostIndicator}${bonusIndicator}`;
       return;
     }
 
