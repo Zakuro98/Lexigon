@@ -1333,7 +1333,7 @@
 
     if (gameMode === 'duel') {
       const baseDamage = letterSum + lengthBonus;
-      const total = Math.round(baseDamage * (1 + boostPercent / 100));
+      const total = Math.ceil(baseDamage * (1 + boostPercent / 100));
       return { letterSum, wordMult: 1, lengthBonus, boostPercent, total };
     }
 
