@@ -1332,8 +1332,9 @@
       : baseLengthBonus;
 
     if (gameMode === 'duel') {
-      const baseDamage = letterSum + lengthBonus;
-      const total = Math.ceil(baseDamage * (1 + boostPercent / 100));
+      // Special-tile boosts apply only to letter damage. The word-length bonus is added afterward.
+      const boostedLetterDamage = Math.ceil(letterSum * (1 + boostPercent / 100));
+      const total = boostedLetterDamage + lengthBonus;
       return { letterSum, wordMult: 1, lengthBonus, boostPercent, total };
     }
 
