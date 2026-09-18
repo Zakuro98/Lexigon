@@ -1327,15 +1327,12 @@
     }
     const len = tiles.length;
     const baseLengthBonus = Math.max(0, (len - 6) * 5) + (len === 16 ? 10 : 0);
-    const lengthBonus = gameMode === 'duel'
-      ? Math.round(baseLengthBonus * 0.6)
-      : baseLengthBonus;
+    const lengthBonus = gameMode === 'duel' ? 0 : baseLengthBonus;
 
     if (gameMode === 'duel') {
-      // Special-tile boosts apply only to letter damage. The word-length bonus is added afterward.
-      const boostedLetterDamage = Math.ceil(letterSum * (1 + boostPercent / 100));
-      const total = boostedLetterDamage + lengthBonus;
-      return { letterSum, wordMult: 1, lengthBonus, boostPercent, total };
+      // Duel damage comes only from base letter damage plus additive special-tile boosts.
+      const total = Math.ceil(letterSum * (1 + boostPercent / 100));
+      return { letterSum, wordMult: 1, lengthBonus: 0, boostPercent, total };
     }
 
     return { letterSum, wordMult, lengthBonus, boostPercent: 0, total: letterSum * wordMult + lengthBonus };
@@ -1346,6 +1343,16 @@
     if (length === 9) return 'X4';
     if (length === 8) return 'X3';
     if (length === 7) return 'X2';
+    return null;
+  }
+
+  // Independent Duel reward track based on raw letter damage only.
+  // Special-tile boosts do not count toward this threshold; Duel has no word-length damage bonus.
+  function duelRewardForBaseDamage(baseDamage) {
+    if (baseDamage >= 16) return 'X5';
+    if (baseDamage >= 14) return 'X4';
+    if (baseDamage >= 13) return 'X3';
+    if (baseDamage >= 12) return 'X2';
     return null;
   }
 
@@ -1454,7 +1461,7 @@
     return { letter, mod };
   }
 
-  function refillRack(targetRack, guaranteedMod = null) {
+  function refillRack(targetRack, guaranteedMods = []) {
     const newIndices = new Set();
 
     if (gameMode === 'duel') {
@@ -1473,13 +1480,21 @@
         }
       }
 
-      // A long-word reward upgrades one random replacement tile.
+      // Length and base-damage rewards are independent. Each earned reward is
+      // guaranteed on its own replacement tile, so meeting both criteria yields two specials.
       // Blanks are valid recipients because these boosts apply to the whole word.
-      if (guaranteedMod) {
+      const rewards = (Array.isArray(guaranteedMods) ? guaranteedMods : [guaranteedMods]).filter(Boolean);
+      if (rewards.length > 0) {
         const rewardCandidates = emptyIndices.filter(i => targetRack[i]);
-        if (rewardCandidates.length > 0) {
-          const rewardIndex = rewardCandidates[Math.floor(Math.random() * rewardCandidates.length)];
-          targetRack[rewardIndex].mod = guaranteedMod;
+        const modRank = { X2: 1, X3: 2, X4: 3, X5: 4 };
+        for (const guaranteedMod of rewards) {
+          if (rewardCandidates.length === 0) break;
+          const candidatePos = Math.floor(Math.random() * rewardCandidates.length);
+          const rewardIndex = rewardCandidates.splice(candidatePos, 1)[0];
+          const existingMod = targetRack[rewardIndex].mod;
+          if (!existingMod || (modRank[guaranteedMod] || 0) > (modRank[existingMod] || 0)) {
+            targetRack[rewardIndex].mod = guaranteedMod;
+          }
         }
       }
       return newIndices;
@@ -1857,16 +1872,20 @@
     if (validation.status === 'pending' || validation.status === 'invalid') return;
     const resolved = validation.resolved ?? word;
 
-    const { total: finalScore, wordMult, lengthBonus, boostPercent } = calcWordScore(tiles);
+    const { total: finalScore, letterSum, wordMult, lengthBonus, boostPercent } = calcWordScore(tiles);
     playerScores[currentPlayer] += finalScore;
     playerWords[currentPlayer] += 1;
     consecutivePasses = 0;
 
-    let rewardMod = null;
     if (gameMode === 'duel') {
       const opponent = currentPlayer === 0 ? 1 : 0;
       playerHealth[opponent] = Math.max(0, playerHealth[opponent] - finalScore);
-      rewardMod = duelRewardForLength(tiles.length);
+
+      // These two reward tracks are independent and each awards its highest reached tier.
+      // Base-damage rewards deliberately use the unboosted letter sum, before special-tile boosts.
+      const lengthRewardMod = duelRewardForLength(tiles.length);
+      const damageRewardMod = duelRewardForBaseDamage(letterSum);
+      const rewardMods = [lengthRewardMod, damageRewardMod].filter(Boolean);
 
       lastPlay = {
         player: currentPlayer,
@@ -1876,15 +1895,18 @@
         word,
         resolved,
         score: finalScore,
+        baseDamage: letterSum,
         wordMult: 1,
         lengthBonus,
         boostPercent,
-        rewardMod,
+        lengthRewardMod,
+        damageRewardMod,
+        rewardMods,
         usedWildcard: word.includes(WILDCARD),
       };
 
       for (const idx of s) r[idx] = null;
-      newlyDrawnIndices = refillRack(r, rewardMod);
+      newlyDrawnIndices = refillRack(r, rewardMods);
       playerSelections[currentPlayer] = [];
 
       if (playerHealth[opponent] <= 0) {
@@ -2204,10 +2226,10 @@
 
     if (gameMode === 'duel') {
       const duelSpecials = [
-        { mod: 'X2', value: '1/32 · 7 reward', title: '+10% whole-word damage; natural draw and guaranteed after a 7 letter word' },
-        { mod: 'X3', value: '1/64 · 8 reward', title: '+20% whole-word damage; natural draw and guaranteed after an 8 letter word' },
-        { mod: 'X4', value: '9 reward', title: '+30% whole-word damage; guaranteed after a 9 letter word' },
-        { mod: 'X5', value: '10+ reward', title: '+50% whole-word damage; guaranteed after a 10+ letter word' },
+        { mod: 'X2', value: '1/32 · 7L / 12 dmg', title: '+10% whole-word damage; natural draw, or guaranteed independently by a 7+ letter word and by 12+ base damage' },
+        { mod: 'X3', value: '1/64 · 8L / 13 dmg', title: '+20% whole-word damage; natural draw, or guaranteed independently by an 8+ letter word and by 13+ base damage' },
+        { mod: 'X4', value: '9L / 14 dmg', title: '+30% whole-word damage; guaranteed independently by a 9+ letter word and by 14+ base damage' },
+        { mod: 'X5', value: '10+L / 16 dmg', title: '+50% whole-word damage; guaranteed independently by a 10+ letter word and by 16+ base damage' },
       ];
       for (const special of duelSpecials) {
         const item = document.createElement('div');
@@ -2301,7 +2323,10 @@
       els.shuffleRackLabel.textContent = 'Swap & pass';
     }
 
-    if (gameOver) {
+    // Keep the final play visible after the game ends. The game-over banner
+    // already communicates that the match is over, so only show the generic
+    // message when there is no last play to display.
+    if (gameOver && !showLastPlay) {
       els.clearBtn.disabled = true;
       els.submitBtn.disabled = true;
       els.wordEmpty.style.display = '';
