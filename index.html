@@ -645,7 +645,17 @@
   .word-builder.last-play-mode .word-letter { cursor: default; }
   .word-builder.last-play-mode .word-letter:hover .letter { color: var(--text-primary); }
 
-  .rack-actions { display: flex; justify-content: flex-end; margin-bottom: 44px; }
+  .rack-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-bottom: 44px; }
+  .rack-actions [hidden] { display: none !important; }
+
+  button.discard-confirm:not(:disabled) {
+    color: var(--danger);
+    border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+  }
+  button.discard-confirm:not(:disabled):hover {
+    border-color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+  }
 
   .tile {
     aspect-ratio: 1;
@@ -731,6 +741,25 @@
   }
 
   .tile.selected:hover { transform: translateY(-8px); }
+
+  .tile.discard-selected {
+    transform: translateY(-6px);
+    box-shadow:
+      inset 0 -4px 0 var(--tile-shadow),
+      0 4px 0 rgba(0,0,0,0.5),
+      0 12px 24px rgba(255, 85, 119, 0.30),
+      0 0 0 3px var(--danger);
+  }
+
+  .tile.has-mod.discard-selected {
+    box-shadow:
+      inset 0 -4px 0 rgba(0,0,0,0.22),
+      0 4px 0 rgba(0,0,0,0.5),
+      0 12px 26px rgba(255, 85, 119, 0.34),
+      0 0 0 3px var(--danger);
+  }
+
+  .tile.discard-selected:hover { transform: translateY(-8px); }
 
   .tile-pts {
     position: absolute;
@@ -1101,12 +1130,16 @@
   </div>
 
   <div class="rack-actions">
-    <button class="ghost" id="shuffleRackBtn" type="button">
+    <button class="ghost" id="discardModeBtn" type="button">
       <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M16 3h5v5M4 20l16.5-16.5M21 16v5h-5M15 15l5 5M4 4l5 5"/>
+        <polyline points="3 6 5 6 21 6"/>
+        <path d="M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v5M14 11v5"/>
       </svg>
-      <span class="btn-label" id="shuffleRackLabel">Swap &amp; pass</span>
+      <span class="btn-label" id="discardModeLabel">Discard tiles</span>
     </button>
+    <button class="ghost" id="cancelDiscardBtn" type="button" hidden>Cancel</button>
+    <button class="ghost discard-confirm" id="confirmDiscardBtn" type="button" disabled hidden>Discard selected</button>
+    <button class="ghost" id="skipTurnBtn" type="button" hidden>Skip turn</button>
   </div>
 
   <section class="history-section" id="historySection" hidden>
@@ -1382,10 +1415,10 @@
   // - Every player loses points equal to the penalty of their leftover tiles.
   // - If a player emptied their rack, they additionally GAIN the sum of all other
   //   players' penalties (the going-out bonus).
-  function computeEndGameResult() {
+  // - If the game ends because nobody can play a valid word, there is no going-out bonus.
+  function computeEndGameResult(reason = 'empty_rack') {
     const penalties = playerRacks.map(calcRackPenalty);
-    const emptyPlayerIdx = playerRacks.findIndex(rackIsEmpty);
-    const reason = emptyPlayerIdx >= 0 ? 'empty_rack' : 'all_passed';
+    const emptyPlayerIdx = reason === 'empty_rack' ? playerRacks.findIndex(rackIsEmpty) : -1;
 
     const finalScores = playerScores.slice();
     for (let i = 0; i < numPlayers; i++) {
@@ -1405,6 +1438,83 @@
       penalties,
       finalScores,
     };
+  }
+
+  function rackHasPlayableWord(targetRack) {
+    // If validation is unavailable, submissions fail open, so the player is
+    // never considered stuck.
+    if (dictionaryState !== 'ready' || !targetRack) return true;
+
+    // Word playability depends only on the rack letters, not tile modifiers or
+    // positions. Cache repeated checks so selecting tiles does not rescan the
+    // dictionary on every render.
+    const cacheKey = targetRack
+      .filter(Boolean)
+      .map(tile => tile.letter)
+      .sort()
+      .join('');
+    if (rackPlayabilityCache.has(cacheKey)) return rackPlayabilityCache.get(cacheKey);
+
+    // Count the rack once. The scratch arrays are then reused for every tested
+    // word so proving that a rack has no play does not create hundreds of
+    // thousands of temporary objects.
+    const rackCounts = new Uint8Array(26);
+    const needCounts = new Uint8Array(26);
+    const touched = [];
+    let blanks = 0;
+    let tileCount = 0;
+    for (const tile of targetRack) {
+      if (!tile) continue;
+      tileCount++;
+      if (tile.letter === WILDCARD) {
+        blanks++;
+      } else {
+        const code = tile.letter.charCodeAt(0) - 97;
+        if (code >= 0 && code < 26) rackCounts[code]++;
+      }
+    }
+
+    for (let len = MIN_WORD_LENGTH; len <= Math.min(tileCount, RACK_SIZE); len++) {
+      for (const word of dictionaryWordsByLength[len]) {
+        touched.length = 0;
+        let validLetters = true;
+        for (let i = 0; i < word.length; i++) {
+          const code = word.charCodeAt(i) - 97;
+          if (code < 0 || code >= 26) { validLetters = false; break; }
+          if (needCounts[code] === 0) touched.push(code);
+          needCounts[code]++;
+        }
+
+        let missing = 0;
+        if (validLetters) {
+          for (const code of touched) {
+            if (needCounts[code] > rackCounts[code]) missing += needCounts[code] - rackCounts[code];
+          }
+        } else {
+          missing = blanks + 1;
+        }
+
+        for (const code of touched) needCounts[code] = 0;
+        if (missing <= blanks) {
+          rackPlayabilityCache.set(cacheKey, true);
+          return true;
+        }
+      }
+    }
+    rackPlayabilityCache.set(cacheKey, false);
+    return false;
+  }
+
+  function classicEndReason() {
+    if (gameMode !== 'classic' || gameOver) return null;
+    if (playerRacks.some(rackIsEmpty)) return 'empty_rack';
+
+    // If dictionary validation is unavailable, preserve fail-open behavior: we
+    // cannot prove that nobody has a valid play, so do not end on this condition.
+    if (dictionaryState === 'ready' && playerRacks.length > 0 && !playerRacks.some(rackHasPlayableWord)) {
+      return 'no_valid_words';
+    }
+    return null;
   }
 
   // ────────── Rack drawing ──────────
@@ -1527,8 +1637,11 @@
     distList: document.getElementById('distList'),
     distMods: document.getElementById('distMods'),
     newGameBtn: document.getElementById('newGameBtn'),
-    shuffleRackBtn: document.getElementById('shuffleRackBtn'),
-    shuffleRackLabel: document.getElementById('shuffleRackLabel'),
+    discardModeBtn: document.getElementById('discardModeBtn'),
+    discardModeLabel: document.getElementById('discardModeLabel'),
+    cancelDiscardBtn: document.getElementById('cancelDiscardBtn'),
+    confirmDiscardBtn: document.getElementById('confirmDiscardBtn'),
+    skipTurnBtn: document.getElementById('skipTurnBtn'),
     clearBtn: document.getElementById('clearBtn'),
     submitBtn: document.getElementById('submitBtn'),
     wordBuilder: document.getElementById('wordBuilder'),
@@ -1551,6 +1664,9 @@
   let modSummary = { DL: 0, TL: 0, DW: 0, TW: 0 };
   let playerRacks = [];
   let playerSelections = [];
+  let discardMode = false;
+  let discardSelection = [];
+  let discardUsedThisTurn = false;
   let newlyDrawnIndices = new Set();
 
   let gameMode = 'classic';
@@ -1569,10 +1685,11 @@
   let history = [];
 
   let gameOver = false;
-  let consecutivePasses = 0;
   let gameEndResult = null; // { reason, emptyPlayerIdx, penalties: [], finalScores: [] }
 
   let dictionary = null;
+  let dictionaryWordsByLength = Array.from({ length: RACK_SIZE + 1 }, () => []);
+  const rackPlayabilityCache = new Map();
   let dictionaryState = 'idle';
 
   function rack() { return playerRacks[currentPlayer]; }
@@ -1628,6 +1745,15 @@
       dictionary = new Set(words);
       for (const w of ONE_LETTER_WORDS) dictionary.add(w);
       for (const w of EXTRA_WORDS) dictionary.add(w.toLowerCase());
+
+      // Keep short words grouped by length so Classic can cheaply determine
+      // whether any current rack has at least one legal play.
+      dictionaryWordsByLength = Array.from({ length: RACK_SIZE + 1 }, () => []);
+      rackPlayabilityCache.clear();
+      for (const w of dictionary) {
+        if (w.length <= RACK_SIZE) dictionaryWordsByLength[w.length].push(w);
+      }
+
       dictionaryState = 'ready';
       setDictStatus(`Dictionary ready: ${dictionary.size.toLocaleString()} words`, 'success');
       renderWordBuilder();
@@ -1757,6 +1883,9 @@
     renderedPlayerHealth = playerHealth.slice();
     playerRacks = [];
     playerSelections = [];
+    discardMode = false;
+    discardSelection = [];
+    discardUsedThisTurn = false;
     currentPlayer = 0;
     concealed = false;
     endingTurn = false;
@@ -1764,7 +1893,6 @@
     lastPlay = null;
     history = [];
     gameOver = false;
-    consecutivePasses = 0;
     gameEndResult = null;
     currentBag = [];
 
@@ -1823,40 +1951,91 @@
     renderHistory();
   }
 
-  function shuffleRack() {
-    if (!currentDist || concealed || endingTurn || gameOver) return;
+  function enterDiscardMode() {
+    if (!currentDist || concealed || endingTurn || gameOver || discardUsedThisTurn) return;
+    if (gameMode === 'classic' && currentBag.length === 0) return;
+    const r = rack();
+    if (!r || !r.some(Boolean)) return;
+
+    // Discarding is a separate pre-play action, so entering discard mode clears
+    // any word currently being assembled.
+    playerSelections[currentPlayer] = [];
+    discardSelection = [];
+    discardMode = true;
+    renderTiles();
+    renderWordBuilder();
+  }
+
+  function cancelDiscard() {
+    if (!discardMode) return;
+    discardMode = false;
+    discardSelection = [];
+    renderTiles();
+    renderWordBuilder();
+  }
+
+  function toggleDiscardTile(idx) {
+    if (!discardMode || concealed || endingTurn || gameOver) return;
+    const r = rack();
+    if (!r || !r[idx]) return;
+
+    const pos = discardSelection.indexOf(idx);
+    if (pos >= 0) {
+      discardSelection.splice(pos, 1);
+    } else if (discardSelection.length < 4) {
+      discardSelection.push(idx);
+    }
+    renderTiles();
+    renderWordBuilder();
+  }
+
+  function confirmDiscard() {
+    if (!discardMode || discardUsedThisTurn || concealed || endingTurn || gameOver) return;
+    if (gameMode === 'classic' && currentBag.length === 0) {
+      cancelDiscard();
+      return;
+    }
+    if (discardSelection.length < 1 || discardSelection.length > 4) return;
+
     const r = rack();
     if (!r) return;
+    const indices = discardSelection.slice();
+    const discarded = indices.map(i => r[i]).filter(Boolean);
+    if (discarded.length === 0) return;
 
-    if (gameMode === 'duel') {
-      const rackTiles = r.filter(t => t !== null);
-      if (rackTiles.length === 0) return;
-      for (let i = 0; i < RACK_SIZE; i++) r[i] = null;
-      playerSelections[currentPlayer] = [];
-      newlyDrawnIndices = refillRack(r);
-      lastPlay = { player: currentPlayer, type: 'shuffle' };
-      endTurn();
-      return;
+    if (gameMode === 'classic') {
+      // Classic exchanges return the exact discarded tiles to the bag first,
+      // then reshuffle the bag before replacements are drawn.
+      currentBag.push(...discarded);
+      shuffleArr(currentBag);
     }
+    // In Duel the discarded tiles simply vanish; the replenishing Duel bag is
+    // untouched and supplies fresh replacements normally.
+    for (const i of indices) r[i] = null;
 
-    // If the classic bag is empty, this becomes a pure pass.
-    if (currentBag.length === 0) {
-      playerSelections[currentPlayer] = [];
-      consecutivePasses += 1;
-      lastPlay = { player: currentPlayer, type: 'pass' };
-      endTurn();
-      return;
-    }
-
-    const rackTiles = r.filter(t => t !== null);
-    if (rackTiles.length === 0) return;
-    currentBag.push(...rackTiles);
-    shuffleArr(currentBag);
-    for (let i = 0; i < RACK_SIZE; i++) r[i] = null;
     playerSelections[currentPlayer] = [];
+    discardSelection = [];
+    discardMode = false;
+    discardUsedThisTurn = true;
     newlyDrawnIndices = refillRack(r);
 
-    lastPlay = { player: currentPlayer, type: 'shuffle' };
+    // The replacement draw may change whether this rack has any playable words.
+    // Force a fresh playability check immediately after every discard instead of
+    // relying on a previously cached rack result.
+    rackPlayabilityCache.clear();
+
+    renderTiles();
+    renderWordBuilder();
+    renderStats();
+  }
+
+  function skipTurn() {
+    if (!currentDist || concealed || endingTurn || gameOver || discardMode) return;
+    const r = rack();
+    if (!r || dictionaryState !== 'ready' || rackHasPlayableWord(r)) return;
+
+    playerSelections[currentPlayer] = [];
+    lastPlay = { player: currentPlayer, type: 'skip' };
     endTurn();
   }
 
@@ -1875,7 +2054,6 @@
     const { total: finalScore, letterSum, wordMult, lengthBonus, boostPercent } = calcWordScore(tiles);
     playerScores[currentPlayer] += finalScore;
     playerWords[currentPlayer] += 1;
-    consecutivePasses = 0;
 
     if (gameMode === 'duel') {
       const opponent = currentPlayer === 0 ? 1 : 0;
@@ -1943,6 +2121,8 @@
     if (gameMode === 'duel' && gameOver) {
       concealed = false;
       endingTurn = false;
+      discardMode = false;
+      discardSelection = [];
       if (turnTimer) { clearTimeout(turnTimer); turnTimer = null; }
       renderScoreboard();
       renderTiles();
@@ -1952,18 +2132,17 @@
       return;
     }
 
-    // Classic game end: bag empty and either someone went out or everyone passed.
-    if (gameMode === 'classic' && currentBag.length === 0 && !gameOver) {
-      const currentRack = rack();
-      if (currentRack && rackIsEmpty(currentRack)) {
+    // Classic ends if somebody empties their rack, or if nobody can form any
+    // dictionary-valid word from their current rack.
+    if (gameMode === 'classic' && !gameOver) {
+      const reason = classicEndReason();
+      if (reason) {
         gameOver = true;
-      } else if (consecutivePasses >= numPlayers) {
-        gameOver = true;
-      }
-      if (gameOver) {
-        gameEndResult = computeEndGameResult();
+        gameEndResult = computeEndGameResult(reason);
         concealed = false;
         endingTurn = false;
+        discardMode = false;
+        discardSelection = [];
         if (turnTimer) { clearTimeout(turnTimer); turnTimer = null; }
         renderScoreboard();
         renderTiles();
@@ -1987,6 +2166,9 @@
       endingTurn = false;
       currentPlayer = (currentPlayer + 1) % numPlayers;
       concealed = numPlayers > 1;
+      discardMode = false;
+      discardSelection = [];
+      discardUsedThisTurn = false;
       newlyDrawnIndices = new Set();
       renderScoreboard();
       renderTiles();
@@ -2031,10 +2213,9 @@
         els.gameOverSubtitle.textContent = `Player ${gameEndResult.winnerIdx + 1} knocked out Player ${gameEndResult.loserIdx + 1}.`;
       } else {
         els.gameOverTitle.textContent = 'Game Over';
-        const reason = gameEndResult.reason === 'empty_rack'
+        els.gameOverSubtitle.textContent = gameEndResult.reason === 'empty_rack'
           ? `Player ${gameEndResult.emptyPlayerIdx + 1} played their last tile.`
-          : 'The bag is empty and everyone passed.';
-        els.gameOverSubtitle.textContent = reason;
+          : 'No player can make a valid word.';
       }
       els.gameOverBanner.hidden = false;
     } else {
@@ -2180,9 +2361,13 @@
       if (data) {
         const selPos = s.indexOf(i);
         const isSelected = selPos >= 0;
+        const isDiscardSelected = discardMode && discardSelection.includes(i);
         const shouldAnimate = newlyDrawnIndices.has(i);
         const modClass = data.mod ? ` has-mod mod-${modifierClass(data.mod)}` : '';
-        tile.className = 'tile' + modClass + (isSelected ? ' selected' : '') + (shouldAnimate ? ' animate' : '');
+        const selectionClass = discardMode
+          ? (isDiscardSelected ? ' discard-selected' : '')
+          : (isSelected ? ' selected' : '');
+        tile.className = 'tile' + modClass + selectionClass + (shouldAnimate ? ' animate' : '');
         if (shouldAnimate) tile.style.animationDelay = `${i * 28}ms`;
         const modLabel = data.mod && gameMode !== 'duel'
           ? `<span class="tile-mod-label">${modifierLabel(data.mod)}</span>`
@@ -2191,7 +2376,7 @@
         const letterHtml = isWildcard ? '' : data.letter;
         const ptsHtml = isWildcard ? '' : `<span class="tile-pts">${tileDisplayedScore(data)}</span>`;
         tile.innerHTML = `${modLabel}${letterHtml}${ptsHtml}`;
-        tile.addEventListener('click', () => toggleTile(i));
+        tile.addEventListener('click', () => discardMode ? toggleDiscardTile(i) : toggleTile(i));
       } else {
         tile.className = 'tile empty';
       }
@@ -2265,21 +2450,15 @@
     for (let i = history.length - 1; i >= 0; i--) {
       const entry = history[i];
       const turnNum = i + 1;
-      if (entry.type === 'shuffle') {
+      if (entry.type === 'skip') {
         html += `<div class="history-entry">
           <span class="history-turn">${turnNum}</span>
           <span class="history-player">Player ${entry.player + 1}</span>
-          <span class="history-action">swapped tiles</span>
+          <div class="word-letters compact"><span class="history-resolved">skipped — no valid words</span></div>
           <span class="history-score"></span>
         </div>`;
-      } else if (entry.type === 'pass') {
-        html += `<div class="history-entry">
-          <span class="history-turn">${turnNum}</span>
-          <span class="history-player">Player ${entry.player + 1}</span>
-          <span class="history-action">passed</span>
-          <span class="history-score"></span>
-        </div>`;
-      } else {
+        continue;
+      }
         const mult = gameMode === 'classic' && entry.wordMult > 1 ? ` <span class="mult">×${entry.wordMult}</span>` : '';
         const boost = gameMode === 'duel' && (entry.boostPercent || 0) > 0
           ? ` <span class="mult">+${entry.boostPercent}%</span>`
@@ -2302,7 +2481,6 @@
           <div class="word-letters compact">${tilesHtml}${resolved}</div>
           <span class="history-score">${entry.score} ${unit}${mult}${boost}${bonus}</span>
         </div>`;
-      }
     }
     els.historyList.innerHTML = html;
   }
@@ -2315,12 +2493,33 @@
 
     els.wordBuilder.classList.remove('has-word', 'last-play-mode');
     els.wordEmpty.classList.remove('last-play', 'last-play-label');
-    els.shuffleRackBtn.disabled = gameOver || concealed || endingTurn || !currentDist;
 
-    if (gameMode === 'classic' && currentBag.length === 0 && currentDist) {
-      els.shuffleRackLabel.textContent = 'Pass';
-    } else {
-      els.shuffleRackLabel.textContent = 'Swap & pass';
+    const discardUnavailable = gameOver || concealed || endingTurn || !currentDist || discardUsedThisTurn
+      || (gameMode === 'classic' && currentBag.length === 0);
+    const canSkipTurn = !gameOver && !concealed && !endingTurn && !discardMode && currentDist
+      && dictionaryState === 'ready' && r && !rackHasPlayableWord(r);
+    els.discardModeBtn.hidden = discardMode;
+    els.cancelDiscardBtn.hidden = !discardMode;
+    els.confirmDiscardBtn.hidden = !discardMode;
+    els.skipTurnBtn.hidden = discardMode || !canSkipTurn;
+    els.skipTurnBtn.disabled = !canSkipTurn;
+    els.discardModeBtn.disabled = discardUnavailable;
+    els.discardModeLabel.textContent = discardUsedThisTurn ? 'Discard used' : 'Discard tiles';
+    els.confirmDiscardBtn.disabled = discardSelection.length === 0;
+    els.confirmDiscardBtn.textContent = discardSelection.length > 0
+      ? `Discard ${discardSelection.length} tile${discardSelection.length === 1 ? '' : 's'}`
+      : 'Discard selected';
+
+    if (discardMode) {
+      els.wordBuilder.classList.add('has-word');
+      els.clearBtn.disabled = true;
+      els.submitBtn.disabled = true;
+      els.wordEmpty.style.display = '';
+      els.wordEmpty.innerHTML = `<em>Select up to 4 tiles to discard · ${discardSelection.length}/4 selected</em>`;
+      els.wordLetters.style.display = 'none';
+      els.wordLetters.innerHTML = '';
+      els.wordScore.innerHTML = '';
+      return;
     }
 
     // Keep the final play visible after the game ends. The game-over banner
@@ -2381,16 +2580,8 @@
       els.submitBtn.disabled = true;
       els.wordEmpty.style.display = '';
 
-      if (lp.type === 'shuffle') {
-        els.wordEmpty.innerHTML = `Player ${lp.player + 1} <strong>swapped</strong> their tiles`;
-        els.wordLetters.style.display = 'none';
-        els.wordLetters.innerHTML = '';
-        els.wordScore.innerHTML = '';
-        return;
-      }
-
-      if (lp.type === 'pass') {
-        els.wordEmpty.innerHTML = `Player ${lp.player + 1} <strong>passed</strong>`;
+      if (lp.type === 'skip') {
+        els.wordEmpty.innerHTML = `Player ${lp.player + 1} <strong>skipped</strong> — no valid words`;
         els.wordLetters.style.display = 'none';
         els.wordLetters.innerHTML = '';
         els.wordScore.innerHTML = '';
@@ -2438,7 +2629,7 @@
   // ────────── Tile selection ──────────
 
   function toggleTile(idx) {
-    if (gameOver) return;
+    if (gameOver || discardMode) return;
     if (concealed) { revealRack(); return; }
     if (endingTurn) return;
     const r = rack();
@@ -2463,7 +2654,10 @@
   // ────────── Wiring ──────────
 
   els.newGameBtn.addEventListener('click', startNewGame);
-  els.shuffleRackBtn.addEventListener('click', shuffleRack);
+  els.discardModeBtn.addEventListener('click', enterDiscardMode);
+  els.cancelDiscardBtn.addEventListener('click', cancelDiscard);
+  els.confirmDiscardBtn.addEventListener('click', confirmDiscard);
+  els.skipTurnBtn.addEventListener('click', skipTurn);
   els.clearBtn.addEventListener('click', clearWord);
   els.submitBtn.addEventListener('click', submitWord);
   // Numeric settings apply only when starting a new game; leaving a field just normalizes it.
@@ -2501,10 +2695,19 @@
     if (endingTurn) return;
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (!els.submitBtn.disabled) submitWord();
+      if (discardMode) {
+        if (!els.confirmDiscardBtn.disabled) confirmDiscard();
+      } else if (!els.submitBtn.disabled) {
+        submitWord();
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      if (discardMode) cancelDiscard();
+      else clearWord();
+    } else if (e.key === 'Backspace') {
+      e.preventDefault();
+      if (!discardMode) clearWord();
     }
-    else if (e.key === 'Escape' || e.key === 'Backspace') { e.preventDefault(); clearWord(); }
-    else if (e.key === ' ') { e.preventDefault(); shuffleRack(); }
   });
 
   setGameMode('classic');
