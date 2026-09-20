@@ -33,6 +33,9 @@ const DUEL_BOOST_PERCENTS = { X2: 10, X3: 20, X4: 30, X5: 50 };
 const CHAT_MAX_LENGTH = 300;
 const CHAT_HISTORY_LIMIT = 100;
 const CHAT_RATE_LIMIT_MS = 350;
+const RECONNECT_TOKEN_BYTES = 32;
+const ROOM_DISCONNECTED_TTL_MS = 60 * 60 * 1000;
+const ROOM_CLEANUP_INTERVAL_MS = 60 * 1000;
 
 const LETTER_FREQS = {
   e: 0.10467, i: 0.08898, a: 0.08838, o: 0.07503, r: 0.07135,
@@ -127,8 +130,43 @@ function send(ws, payload) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
 }
 
-function sendError(ws, message) {
-  send(ws, { type: 'error', message });
+function sendError(ws, message, code = null) {
+  const payload = { type: 'error', message };
+  if (code) payload.code = code;
+  send(ws, payload);
+}
+
+function playerIsConnected(player) {
+  return !!player?.ws && player.ws.readyState === WebSocket.OPEN;
+}
+
+function roomHasDisconnectedPlayers(room) {
+  return room.players.some(player => !playerIsConnected(player));
+}
+
+function roomAllPlayersDisconnected(room) {
+  return room.players.length > 0 && room.players.every(player => !playerIsConnected(player));
+}
+
+function refreshRoomDisconnectExpiry(room, now = Date.now()) {
+  if (roomAllPlayersDisconnected(room)) {
+    if (!room.allDisconnectedAt) room.allDisconnectedAt = now;
+  } else {
+    room.allDisconnectedAt = null;
+  }
+}
+
+function cleanupExpiredRooms(now = Date.now()) {
+  for (const [code, room] of rooms) {
+    refreshRoomDisconnectExpiry(room, now);
+    if (room.allDisconnectedAt && now - room.allDisconnectedAt >= ROOM_DISCONNECTED_TTL_MS) {
+      rooms.delete(code);
+    }
+  }
+}
+
+function newReconnectToken() {
+  return crypto.randomBytes(RECONNECT_TOKEN_BYTES).toString('hex');
 }
 
 function shuffleArr(arr) {
@@ -472,6 +510,7 @@ function createGame(settings, playerCount) {
     health: new Array(playerCount).fill(settings.startingHP),
     currentPlayer: 0,
     discardUsedThisTurn: false,
+    consecutiveSkips: 0,
     history: [],
     lastPlay: null,
     gameOver: false,
@@ -523,9 +562,8 @@ function clearNewlyDrawn(game) {
   game.newlyDrawn = Array.from({ length: game.numPlayers }, () => []);
 }
 
-function finishClassicIfNeeded(game, room = null) {
-  const reason = classicEndReason(game);
-  if (!reason) return false;
+function finishClassic(game, reason, room = null) {
+  if (game.mode !== 'classic' || game.gameOver) return false;
   game.gameOver = true;
   game.endResult = computeClassicEndResult(game, reason);
 
@@ -538,6 +576,11 @@ function finishClassicIfNeeded(game, room = null) {
     if (winner) addSystemMessage(room, `Game Over. ${winner.username} won!`, 'classic_game_over', { winnerId: winner.id });
   }
   return true;
+}
+
+function finishClassicIfNeeded(game, room = null) {
+  const reason = classicEndReason(game);
+  return reason ? finishClassic(game, reason, room) : false;
 }
 
 function advanceTurn(game) {
@@ -557,6 +600,10 @@ function requireGameTurn(ws) {
   if (playerIndex < 0) return null;
   if (room.game.gameOver) {
     sendError(ws, 'The match is already over.');
+    return null;
+  }
+  if (roomHasDisconnectedPlayers(room)) {
+    sendError(ws, 'Waiting for all players to reconnect.');
     return null;
   }
   if (room.game.currentPlayer !== playerIndex) {
@@ -585,6 +632,7 @@ function playWord(ws, msg) {
   const score = calcWordScore(game.mode, tiles);
   game.scores[playerIndex] += score.total;
   game.words[playerIndex] += 1;
+  if (game.mode === 'classic') game.consecutiveSkips = 0;
 
   if (game.mode === 'duel') {
     const opponent = playerIndex === 0 ? 1 : 0;
@@ -614,7 +662,7 @@ function playWord(ws, msg) {
     for (const index of indices) rack[index] = null;
     game.newlyDrawn[playerIndex] = refillRack(game, rack, rewardMods);
     game.history.push(game.lastPlay);
-    addSystemMessage(room, `${room.players[playerIndex].username} played "${resolved}", dealing ${score.total} dmg`, 'duel_play', {
+    addSystemMessage(room, `${room.players[playerIndex].username} played "${resolved}", dealing ${score.total} dmg.`, 'duel_play', {
       actorId: room.players[playerIndex].id,
       word: resolved,
       damage: score.total,
@@ -698,7 +746,10 @@ function skipTurn(ws) {
   if (!turn) return;
   const { room, playerIndex, game } = turn;
   const rack = game.racks[playerIndex];
-  if (rackHasPlayableWord(rack)) return sendError(ws, 'You still have at least one valid word to play.');
+  const classicBagEmpty = game.mode === 'classic' && game.bag.length === 0;
+  if (!classicBagEmpty && rackHasPlayableWord(rack)) {
+    return sendError(ws, 'You still have at least one valid word to play.');
+  }
 
   clearNewlyDrawn(game);
   game.lastPlay = { player: playerIndex, type: 'skip' };
@@ -706,7 +757,14 @@ function skipTurn(ws) {
   addSystemMessage(room, `${room.players[playerIndex].username} skipped their turn.`, 'skip', {
     actorId: room.players[playerIndex].id,
   });
-  if (game.mode === 'classic' && finishClassicIfNeeded(game, room)) {
+
+  if (game.mode === 'classic') game.consecutiveSkips += 1;
+
+  if (game.mode === 'classic' && game.consecutiveSkips >= game.numPlayers) {
+    // A full uninterrupted lap of skips ends Classic, even if one or more
+    // players technically still had a playable word once the bag was empty.
+    finishClassic(game, 'all_skipped', room);
+  } else if (game.mode === 'classic' && finishClassicIfNeeded(game, room)) {
     // No turn advance when this skip proves the entire table is stuck.
   } else {
     advanceTurn(game);
@@ -755,7 +813,7 @@ function publicRoomState(room) {
     players: room.players.map(player => ({
       id: player.id,
       username: player.username,
-      connected: !!player.ws && player.ws.readyState === WebSocket.OPEN,
+      connected: playerIsConnected(player),
     })),
     settings: { ...room.settings },
     chat: chat.map(message => ({
@@ -775,12 +833,17 @@ function publicGameStateFor(room, viewerIndex) {
   const game = room.game;
   if (!game) return null;
   const viewerRack = game.racks[viewerIndex] || new Array(RACK_SIZE).fill(null);
+  const pausedForDisconnect = roomHasDisconnectedPlayers(room);
   const viewerTurn = viewerIndex === game.currentPlayer && !game.gameOver;
   const canDiscard = viewerTurn
+    && !pausedForDisconnect
     && !game.discardUsedThisTurn
     && viewerRack.some(Boolean)
     && (game.mode === 'duel' || game.bag.length > 0);
-  const canSkip = viewerTurn && !rackHasPlayableWord(viewerRack);
+  const canSkip = viewerTurn && !pausedForDisconnect && (
+    (game.mode === 'classic' && game.bag.length === 0)
+    || !rackHasPlayableWord(viewerRack)
+  );
 
   return {
     revision: game.revision,
@@ -791,12 +854,13 @@ function publicGameStateFor(room, viewerIndex) {
     players: room.players.map((player, index) => ({
       id: player.id,
       username: player.username,
-      connected: !!player.ws && player.ws.readyState === WebSocket.OPEN,
+      connected: playerIsConnected(player),
       score: game.scores[index],
       words: game.words[index],
       health: game.health[index],
     })),
     yourRack: viewerRack.map(tile => tile ? { letter: tile.letter, mod: tile.mod } : null),
+    pausedForDisconnect,
     bagRemaining: game.mode === 'classic' ? game.bag.length : null,
     distribution: { ...game.distribution },
     modSummary: { ...game.modSummary },
@@ -820,7 +884,7 @@ function broadcastRoom(room) {
       type: 'room_state',
       room: publicState,
       game: room.phase === 'game' ? publicGameStateFor(room, index) : null,
-      you: { id: player.id },
+      you: { id: player.id, reconnectToken: player.reconnectToken },
     });
   });
 }
@@ -868,6 +932,7 @@ function removeSocketFromRoom(ws, { acknowledge = false } = {}) {
   }
 
   const room = rooms.get(code);
+  const playerId = ws.playerId;
   ws.roomCode = null;
   ws.playerId = null;
   if (!room) {
@@ -875,7 +940,7 @@ function removeSocketFromRoom(ws, { acknowledge = false } = {}) {
     return;
   }
 
-  const leavingIndex = room.players.findIndex(player => player.ws === ws);
+  const leavingIndex = room.players.findIndex(player => player.id === playerId && player.ws === ws);
   const leavingPlayer = leavingIndex >= 0 ? room.players[leavingIndex] : null;
   const leavingWasHost = !!leavingPlayer && leavingPlayer.id === room.hostId;
   if (leavingPlayer) {
@@ -883,9 +948,9 @@ function removeSocketFromRoom(ws, { acknowledge = false } = {}) {
     room.players.splice(leavingIndex, 1);
   }
 
-  // Reconnection is a later feature. For now, if anybody leaves during a match,
-  // safely return the remaining players to the lobby instead of corrupting player indices.
-  if (room.phase === 'game') {
+  // An explicit leave during a match forfeits that seat. Returning the remaining
+  // players to the lobby avoids re-indexing live racks/scores around a missing player.
+  if (leavingPlayer && room.phase === 'game') {
     room.phase = 'lobby';
     room.game = null;
   }
@@ -893,10 +958,11 @@ function removeSocketFromRoom(ws, { acknowledge = false } = {}) {
   if (room.players.length === 0) {
     rooms.delete(code);
   } else {
+    refreshRoomDisconnectExpiry(room);
     let newHost = null;
     if (!room.players.some(player => player.id === room.hostId)) {
-      room.hostId = room.players[0].id;
-      newHost = room.players[0];
+      newHost = room.players.find(playerIsConnected) || room.players[0];
+      room.hostId = newHost.id;
     }
     if (room.settings.mode === 'classic' && room.settings.playerCount < room.players.length) {
       room.settings.playerCount = Math.min(MAX_PLAYERS, room.players.length);
@@ -908,13 +974,80 @@ function removeSocketFromRoom(ws, { acknowledge = false } = {}) {
   if (acknowledge) send(ws, { type: 'left_room' });
 }
 
+function disconnectSocketFromRoom(ws) {
+  const code = ws.roomCode;
+  const playerId = ws.playerId;
+  ws.roomCode = null;
+  ws.playerId = null;
+  if (!code || !playerId) return;
+
+  const room = rooms.get(code);
+  if (!room) return;
+  const player = room.players.find(candidate => candidate.id === playerId && candidate.ws === ws);
+  if (!player) return;
+
+  player.ws = null;
+  player.disconnectedAt = Date.now();
+  refreshRoomDisconnectExpiry(room, player.disconnectedAt);
+  addSystemMessage(room, `${player.username} disconnected.`, 'disconnect', { actorId: player.id });
+  broadcastRoom(room);
+}
+
 function attachPlayer(ws, room, username, makeHost = false) {
-  const player = { id: crypto.randomUUID(), username, ws };
+  const player = {
+    id: crypto.randomUUID(),
+    username,
+    ws,
+    reconnectToken: newReconnectToken(),
+    disconnectedAt: null,
+  };
   room.players.push(player);
+  room.allDisconnectedAt = null;
   if (makeHost) room.hostId = player.id;
   ws.roomCode = room.code;
   ws.playerId = player.id;
   return player;
+}
+
+function reconnectTokenMatches(player, token) {
+  if (!player?.reconnectToken || typeof token !== 'string') return false;
+  const expected = Buffer.from(player.reconnectToken, 'utf8');
+  const actual = Buffer.from(token, 'utf8');
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
+function resumeRoom(ws, msg) {
+  const code = cleanRoomCode(msg.roomCode);
+  const playerId = typeof msg.playerId === 'string' ? msg.playerId : '';
+  const token = typeof msg.reconnectToken === 'string' ? msg.reconnectToken : '';
+  const room = rooms.get(code);
+  if (!room) return sendError(ws, 'That room no longer exists.', 'resume_failed');
+
+  const player = room.players.find(candidate => candidate.id === playerId);
+  if (!player || !reconnectTokenMatches(player, token)) {
+    return sendError(ws, 'Could not restore that room session.', 'resume_failed');
+  }
+  // Never let a second socket take over a player seat that is still connected.
+  // A reconnect is only valid after the server has observed the old socket disconnect.
+  const wasDisconnected = !playerIsConnected(player);
+  if (!wasDisconnected) {
+    return sendError(ws, 'You are already connected to this room.', 'already_connected');
+  }
+
+  // If this socket somehow belongs to another room, leave that old seat first.
+  if (ws.roomCode && (ws.roomCode !== code || ws.playerId !== playerId)) removeSocketFromRoom(ws);
+
+  player.ws = ws;
+  player.disconnectedAt = null;
+  room.allDisconnectedAt = null;
+  player.reconnectToken = newReconnectToken();
+  ws.roomCode = room.code;
+  ws.playerId = player.id;
+
+  if (wasDisconnected) {
+    addSystemMessage(room, `${player.username} rejoined.`, 'rejoin', { actorId: player.id });
+  }
+  broadcastRoom(room);
 }
 
 function currentMembership(ws) {
@@ -954,6 +1087,7 @@ function createRoom(ws, msg) {
     players: [],
     settings: defaultSettings(),
     createdAt: Date.now(),
+    allDisconnectedAt: null,
     game: null,
     chat: [],
   };
@@ -1025,6 +1159,7 @@ function startGame(ws) {
 
   const needed = roomCapacity(room);
   if (room.players.length !== needed) return sendError(ws, `This match needs exactly ${needed} players before it can start.`);
+  if (roomHasDisconnectedPlayers(room)) return sendError(ws, 'Everyone must be connected before the match can start.');
 
   try {
     room.game = createGame(room.settings, room.players.length);
@@ -1046,6 +1181,34 @@ function returnToLobby(ws) {
   room.game = null;
   addSystemMessage(room, `${membership.player.username} returned the room to the lobby.`, 'return_lobby', { actorId: membership.player.id });
   broadcastRoom(room);
+}
+
+function endGameEarly(ws) {
+  const membership = requireHost(ws);
+  if (!membership) return;
+  const { room } = membership;
+  if (room.phase !== 'game' || !room.game) return sendError(ws, 'There is no game in progress.');
+  if (room.game.gameOver) return sendError(ws, 'That game is already over.');
+  room.phase = 'lobby';
+  room.game = null;
+  addSystemMessage(room, `${membership.player.username} ended the game early.`, 'end_game', { actorId: membership.player.id });
+  broadcastRoom(room);
+}
+
+function closeRoom(ws) {
+  const membership = requireHost(ws);
+  if (!membership) return;
+  const { room } = membership;
+  if (room.phase !== 'lobby') return sendError(ws, 'End the current game before closing the room.');
+
+  const players = room.players.slice();
+  rooms.delete(room.code);
+  for (const player of players) {
+    if (!player.ws) continue;
+    send(player.ws, { type: 'room_closed', roomCode: room.code, message: 'The host closed the room.' });
+    player.ws.roomCode = null;
+    player.ws.playerId = null;
+  }
 }
 
 function sendChatMessage(ws, msg) {
@@ -1082,14 +1245,18 @@ function handleMessage(ws, raw) {
   if (!msg || typeof msg.type !== 'string') return sendError(ws, 'Malformed message.');
 
   switch (msg.type) {
+    case 'latency_ping': return send(ws, { type: 'latency_pong', id: msg.id });
     case 'create_room': return createRoom(ws, msg);
     case 'join_room': return joinRoom(ws, msg);
+    case 'resume_room': return resumeRoom(ws, msg);
     case 'update_settings': return updateSettings(ws, msg);
     case 'start_game': return startGame(ws);
     case 'play_word': return playWord(ws, msg);
     case 'discard_tiles': return discardTiles(ws, msg);
     case 'skip_turn': return skipTurn(ws);
     case 'return_to_lobby': return returnToLobby(ws);
+    case 'end_game': return endGameEarly(ws);
+    case 'close_room': return closeRoom(ws);
     case 'chat_message': return sendChatMessage(ws, msg);
     case 'leave_room': return removeSocketFromRoom(ws, { acknowledge: true });
     default: return sendError(ws, `Unknown action: ${msg.type}`);
@@ -1154,11 +1321,14 @@ function startServer() {
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
     ws.on('message', data => handleMessage(ws, data));
-    ws.on('close', () => removeSocketFromRoom(ws));
+    ws.on('close', () => disconnectSocketFromRoom(ws));
   });
 
   // Keep long-lived room connections healthy and discard dead sockets promptly.
   // WebSocket clients automatically answer protocol-level ping frames with pong.
+  const roomCleanup = setInterval(() => cleanupExpiredRooms(), ROOM_CLEANUP_INTERVAL_MS);
+  roomCleanup.unref?.();
+
   const heartbeat = setInterval(() => {
     for (const ws of wss.clients) {
       if (ws.isAlive === false) {
@@ -1170,7 +1340,10 @@ function startServer() {
     }
   }, 30_000);
   heartbeat.unref?.();
-  wss.on('close', () => clearInterval(heartbeat));
+  wss.on('close', () => {
+    clearInterval(heartbeat);
+    clearInterval(roomCleanup);
+  });
 
   server.listen(PORT, HOST, () => {
     console.log(`Lexigon listening on http://${HOST}:${PORT}`);
@@ -1193,7 +1366,11 @@ module.exports = {
   publicGameStateFor,
   publicRoomState,
   sendChatMessage,
+  resumeRoom,
+  disconnectSocketFromRoom,
+  cleanupExpiredRooms,
   startServer,
   _handleMessage: handleMessage,
   _rooms: rooms,
+  _roomDisconnectedTtlMs: ROOM_DISCONNECTED_TTL_MS,
 };

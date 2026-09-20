@@ -1,6 +1,6 @@
 {
   "name": "lexigon-online",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "Lexigon local game plus server-authoritative online rooms and matches",
   "main": "server.js",
