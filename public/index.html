@@ -2480,6 +2480,55 @@
   let onlineDiscardSelection = [];
   let onlineActionPending = false;
   let savedLocalGameState = null;
+  let notificationAudioContext = null;
+
+  function ensureNotificationAudio() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    if (!notificationAudioContext) notificationAudioContext = new AudioContextClass();
+    if (notificationAudioContext.state === 'suspended') {
+      notificationAudioContext.resume().catch(() => {});
+    }
+    return notificationAudioContext;
+  }
+
+  function playNotificationTone(notes) {
+    const ctx = ensureNotificationAudio();
+    if (!ctx || ctx.state === 'closed') return;
+    const start = ctx.currentTime + 0.01;
+    for (const note of notes) {
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const noteStart = start + note.delay;
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(note.frequency, noteStart);
+      gain.gain.setValueAtTime(0.0001, noteStart);
+      gain.gain.exponentialRampToValueAtTime(note.gain, noteStart + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, noteStart + note.duration);
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start(noteStart);
+      oscillator.stop(noteStart + note.duration + 0.02);
+    }
+  }
+
+  function playTurnNotificationSound() {
+    playNotificationTone([
+      { frequency: 523.25, delay: 0, duration: 0.14, gain: 0.055 },
+      { frequency: 783.99, delay: 0.12, duration: 0.20, gain: 0.06 },
+    ]);
+  }
+
+  function playChatNotificationSound() {
+    playNotificationTone([
+      { frequency: 659.25, delay: 0, duration: 0.11, gain: 0.04 },
+    ]);
+  }
+
+  // Unlock Web Audio on the first ordinary user interaction. Browsers generally
+  // block programmatic audio until the page has received a gesture.
+  document.addEventListener('pointerdown', ensureNotificationAudio, { once: true, passive: true });
+  document.addEventListener('keydown', ensureNotificationAudio, { once: true });
 
   function rack() { return playerRacks[currentPlayer]; }
   function sel() { return playerSelections[currentPlayer]; }
@@ -3722,9 +3771,13 @@
       if (!onlineRoomState) return;
       const target = msg.private || msg.message.private ? onlinePrivateChatMessages : onlineRoomState.chat;
       if (!Array.isArray(target)) return;
-      if (!target.some(message => message.id === msg.message.id)) {
+      const isNewMessage = !target.some(message => message.id === msg.message.id);
+      if (isNewMessage) {
         target.push(msg.message);
         if (target.length > 100) target.splice(0, target.length - 100);
+        if (msg.message.kind !== 'system' && msg.message.playerId !== onlinePlayerId) {
+          playChatNotificationSound();
+        }
       }
       renderRoomChat();
       return;
@@ -3749,6 +3802,10 @@
       onlineActionPending = false;
       if (msg.room.phase === 'game' && msg.game) {
         const enteringOnlineMatch = !onlineGameState;
+        const wasYourTurn = !!onlineGameState && !onlineGameState.gameOver
+          && onlineGameState.currentPlayer === onlineGameState.yourPlayerIndex;
+        const isYourTurnNow = !msg.game.gameOver
+          && msg.game.currentPlayer === msg.game.yourPlayerIndex;
         const gameJustEnded = !!msg.game.gameOver && !onlineGameState?.gameOver;
         const previousOwnRack = onlineGameState?.yourRack || null;
         const nextOwnRack = msg.game.yourRack || null;
@@ -3769,6 +3826,7 @@
         if (enteringOnlineMatch || ownRackChanged || gameJustEnded) onlineSelection = [];
         onlineDiscardMode = false;
         onlineDiscardSelection = [];
+        if (isYourTurnNow && !wasYourTurn) playTurnNotificationSound();
         showAppScreen('online');
         renderOnlineGameScreen();
       } else {
