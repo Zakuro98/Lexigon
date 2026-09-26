@@ -584,3 +584,17 @@ console.log('Lexigon frontend reconnect-policy self-tests passed.');
 }
 
 console.log('Lexigon room lifecycle self-tests passed.');
+
+
+// Frontend notification sounds: turn changes should chime only on the transition
+// into our turn, while chat should ping only for new non-system messages from
+// another player.
+{
+  const frontend = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+  assert(frontend.includes('function playTurnNotificationSound()'), 'Turn notification sound helper is missing');
+  assert(frontend.includes('function playChatNotificationSound()'), 'Chat notification sound helper is missing');
+  assert(frontend.includes('if (isYourTurnNow && !wasYourTurn) playTurnNotificationSound();'), 'Turn sound is not transition-gated');
+  assert(frontend.includes("msg.message.kind !== 'system' && msg.message.playerId !== onlinePlayerId"), "Chat sound is not limited to other players' chat messages");
+}
+
+console.log('Lexigon notification-sound self-tests passed.');
