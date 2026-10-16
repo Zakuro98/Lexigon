@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
+const GameClock = require('./public/chess-clock.js');
 let WebSocketServer;
 let WebSocket;
 try {
@@ -17,7 +18,9 @@ try {
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const INDEX_PATH = path.join(PUBLIC_DIR, 'index.html');
+const DICTIONARY_PATH = path.join(PUBLIC_DIR, 'dictionary.txt.gz');
+const SCRABBLE_DICTIONARY_PATH = path.join(PUBLIC_DIR, 'scrabble.txt.gz');
+const REJECTED_DICTIONARY_PATH = path.join(PUBLIC_DIR, 'rejected_spellings.txt.gz');
 const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MAX_PLAYERS = 4;
 const RACK_SIZE = 16;
@@ -61,30 +64,36 @@ const POINTS = {
 
 const rooms = new Map();
 
-// The browser and server intentionally use the exact same embedded dictionary.
-// The base list is gzip/base64 inside public/index.html; the small runtime extra
-// word arrays are parsed from that same file too, so they cannot silently drift.
-function loadDictionaryFromClient() {
-  const html = fs.readFileSync(INDEX_PATH, 'utf8');
-  const b64Match = html.match(/<script\s+id=["']dictData["'][^>]*>([\s\S]*?)<\/script>/i);
-  if (!b64Match) throw new Error('Could not find embedded dictionary in public/index.html');
-  const text = zlib.gunzipSync(Buffer.from(b64Match[1].trim(), 'base64')).toString('utf8');
-  const dictionary = new Set(text.split('\n').map(w => w.trim()).filter(w => w.length >= MIN_WORD_LENGTH));
-
-  for (const constName of ['ONE_LETTER_WORDS', 'EXTRA_WORDS']) {
-    const block = html.match(new RegExp(`const\\s+${constName}\\s*=\\s*\\[([\\s\\S]*?)\\];`));
-    if (!block) continue;
-    for (const match of block[1].matchAll(/'([^']+)'/g)) dictionary.add(match[1].toLowerCase());
+// Read the same complete gzip word list fetched by the browser.
+function loadWordList(filePath) {
+  const text = zlib.gunzipSync(fs.readFileSync(filePath)).toString('utf8');
+  const words = text.split('\n').map(w => w.trim()).filter(Boolean);
+  if (words.length === 0 || words.some(w => !/^[a-z]{1,16}$/.test(w))) {
+    throw new Error('Dictionary must contain lowercase words of 1–16 letters, one per line.');
   }
+  return new Set(words);
+}
+
+function loadDictionary() {
+  const dictionary = loadWordList(DICTIONARY_PATH);
+  const rejected = loadWordList(REJECTED_DICTIONARY_PATH);
+  for (const word of rejected) {
+    if (dictionary.has(word)) throw new Error(`Word appears in both dictionary lists: ${word}`);
+  }
+  const rejectedByLength = Array.from({ length: RACK_SIZE + 1 }, () => []);
+  for (const word of rejected) rejectedByLength[word.length].push(word);
 
   const byLength = Array.from({ length: RACK_SIZE + 1 }, () => []);
   for (const word of dictionary) {
     if (word.length <= RACK_SIZE) byLength[word.length].push(word);
   }
-  return { dictionary, byLength };
+  return { dictionary, byLength, rejected, rejectedByLength };
 }
 
-const { dictionary: DICTIONARY, byLength: DICTIONARY_BY_LENGTH } = loadDictionaryFromClient();
+const { dictionary: DICTIONARY, byLength: DICTIONARY_BY_LENGTH, rejected: REJECTED_WORDS, rejectedByLength: REJECTED_BY_LENGTH } = loadDictionary();
+const SCRABBLE_DICTIONARY = loadWordList(SCRABBLE_DICTIONARY_PATH);
+const SCRABBLE_BY_LENGTH = Array.from({ length: RACK_SIZE + 1 }, () => []);
+for (const word of SCRABBLE_DICTIONARY) SCRABBLE_BY_LENGTH[word.length].push(word);
 const RACK_PLAYABILITY_CACHE = new Map();
 console.log(`Loaded ${DICTIONARY.size.toLocaleString()} Lexigon words for authoritative validation.`);
 
@@ -119,7 +128,28 @@ function randomRoomCode(length = 4) {
 }
 
 function defaultSettings() {
-  return { mode: 'classic', playerCount: 2, bagSize: 160, minPerLetter: 1, startingHP: 200 };
+  return { mode: 'classic', dictionaryMode: 'full', timedMode: false, timeLimitSeconds: 1200, incrementSeconds: 20, overtimeSeconds: 600, spectatorChatEnabled: true, playerCount: 2, bagSize: 160, minPerLetter: 1, startingHP: 200 };
+}
+
+function roomMembers(room) {
+  return [...room.players.filter(player => !player.left), ...(room.spectators || [])];
+}
+
+function memberIsSpectator(room, member) {
+  return !!member.spectator || (room.phase === 'game' && !!room.game?.eliminated?.[room.players.indexOf(member)]);
+}
+
+function emptyPreview() { return { selection: [], discardMode: false, discardSelection: [] }; }
+
+function resetPreview(game, index, rackChanged = false) {
+  game.previews[index] = emptyPreview();
+  if (rackChanged) game.rackVersions[index]++;
+}
+
+function resetLobby(room) {
+  room.phase = 'lobby';
+  room.game = null;
+  room.players = room.players.filter(player => !player.left);
 }
 
 function roomCapacity(room) {
@@ -141,11 +171,12 @@ function playerIsConnected(player) {
 }
 
 function roomHasDisconnectedPlayers(room) {
-  return room.players.some(player => !playerIsConnected(player));
+  return room.players.some((player, index) => !(room.phase === 'game' && room.game?.eliminated?.[index]) && !playerIsConnected(player));
 }
 
 function roomAllPlayersDisconnected(room) {
-  return room.players.length > 0 && room.players.every(player => !playerIsConnected(player));
+  const members = roomMembers(room);
+  return members.length > 0 && members.every(member => !playerIsConnected(member));
 }
 
 function refreshRoomDisconnectExpiry(room, now = Date.now()) {
@@ -288,7 +319,7 @@ function calcWordScore(mode, tiles) {
     letterSum += points;
   }
 
-  const baseLengthBonus = Math.max(0, (tiles.length - 6) * 5) + (tiles.length === 16 ? 10 : 0);
+  const baseLengthBonus = [0, 0, 0, 0, 0, 0, 0, 5, 10, 15, 20, 25, 30, 40, 50, 70, 100][tiles.length] || 0;
   if (mode === 'duel') {
     return {
       letterSum,
@@ -323,26 +354,55 @@ function duelRewardForBaseDamage(baseDamage) {
   return null;
 }
 
-function tryResolutions(word, startIdx = 0) {
+function tryResolutions(word, startIdx = 0, wordSet = DICTIONARY) {
   const idx = word.indexOf(WILDCARD, startIdx);
-  if (idx === -1) return DICTIONARY.has(word) ? word : null;
+  if (idx === -1) return wordSet.has(word) ? word : null;
   for (let i = 0; i < 26; i++) {
     const letter = String.fromCharCode(97 + i);
     const candidate = word.substring(0, idx) + letter + word.substring(idx + 1);
-    const result = tryResolutions(candidate, idx + 1);
+    const result = tryResolutions(candidate, idx + 1, wordSet);
     if (result) return result;
   }
   return null;
 }
 
-function resolveWord(word) {
-  if (!word.includes(WILDCARD)) return DICTIONARY.has(word) ? word : null;
-  return tryResolutions(word, 0);
+function resolveWord(word, dictionaryMode = 'full') {
+  const wordSet = dictionaryMode === 'scrabble' ? SCRABBLE_DICTIONARY : DICTIONARY;
+  if (!word.includes(WILDCARD)) return wordSet.has(word) ? word : null;
+  return tryResolutions(word, 0, wordSet);
 }
 
-function rackHasPlayableWord(targetRack) {
+function getWordValidation(word, dictionaryMode = 'full') {
+  if (word.length < MIN_WORD_LENGTH) return { status: 'invalid', resolved: null, reason: 'too-short' };
+  const resolved = resolveWord(word, dictionaryMode);
+  if (resolved) return { status: 'valid', resolved };
+  if (dictionaryMode === 'scrabble' && resolveWord(word, 'full')) {
+    return { status: 'invalid', resolved: null, reason: 'not-scrabble' };
+  }
+  if (!word.includes(WILDCARD)) {
+    return { status: 'invalid', resolved: null, reason: REJECTED_WORDS.has(word) ? 'rejected' : 'unlisted' };
+  }
+  const rejectedMatch = (REJECTED_BY_LENGTH[word.length] || []).some(candidate =>
+    [...word].every((letter, index) => letter === WILDCARD || letter === candidate[index]));
+  return { status: 'invalid', resolved: null, reason: rejectedMatch ? 'rejected-pattern' : 'unlisted-pattern' };
+}
+
+function invalidWordMessage(validation) {
+  switch (validation.reason) {
+    case 'not-scrabble': return 'Not in the Scrabble dictionary. This word or pattern is allowed only by the full dictionary.';
+    case 'rejected': return 'Rejected word: this spelling is in the rejected list.';
+    case 'unlisted': return 'Unlisted word: this spelling is in neither list.';
+    case 'rejected-pattern': return 'No accepted word matches this pattern; rejected matches exist.';
+    case 'unlisted-pattern': return 'No accepted or rejected word matches this pattern.';
+    case 'unavailable': return 'Not accepted. The rejected list is unavailable, so its status cannot be checked.';
+    default: return 'Choose at least one letter.';
+  }
+}
+
+function rackHasPlayableWord(targetRack, dictionaryMode = 'full') {
   if (!targetRack) return false;
-  const cacheKey = targetRack.filter(Boolean).map(tile => tile.letter).sort().join('');
+  const cacheKey = dictionaryMode + ':' + targetRack.filter(Boolean).map(tile => tile.letter).sort().join('');
+  const byLength = dictionaryMode === 'scrabble' ? SCRABBLE_BY_LENGTH : DICTIONARY_BY_LENGTH;
   if (RACK_PLAYABILITY_CACHE.has(cacheKey)) return RACK_PLAYABILITY_CACHE.get(cacheKey);
 
   const rackCounts = new Uint8Array(26);
@@ -362,7 +422,7 @@ function rackHasPlayableWord(targetRack) {
   }
 
   for (let len = MIN_WORD_LENGTH; len <= Math.min(tileCount, RACK_SIZE); len++) {
-    for (const word of DICTIONARY_BY_LENGTH[len]) {
+    for (const word of byLength[len]) {
       touched.length = 0;
       let validLetters = true;
       for (let i = 0; i < word.length; i++) {
@@ -405,9 +465,11 @@ function rackIsEmpty(rack) {
 
 function computeClassicEndResult(game, reason) {
   const penalties = game.racks.map(rack => rack.reduce((sum, tile) => sum + calcTilePenalty(tile), 0));
-  const emptyPlayerIdx = reason === 'empty_rack' ? game.racks.findIndex(rackIsEmpty) : -1;
+  const overtime = GameClock.penalties(game.clock);
+  game.overtimePenalties = game.scores.map((_, index) => overtime[index] || 0);
+  const emptyPlayerIdx = reason === 'empty_rack' ? game.racks.findIndex((rack, index) => !game.eliminated?.[index] && rackIsEmpty(rack)) : -1;
   const finalScores = game.scores.slice();
-  for (let i = 0; i < game.numPlayers; i++) finalScores[i] -= penalties[i];
+  for (let i = 0; i < game.numPlayers; i++) finalScores[i] -= penalties[i] + game.overtimePenalties[i];
   if (emptyPlayerIdx >= 0) {
     let bonus = 0;
     for (let i = 0; i < game.numPlayers; i++) if (i !== emptyPlayerIdx) bonus += penalties[i];
@@ -418,13 +480,16 @@ function computeClassicEndResult(game, reason) {
     emptyPlayerIdx: emptyPlayerIdx >= 0 ? emptyPlayerIdx : null,
     penalties,
     finalScores,
+    winnerIndices: GameClock.winners(finalScores, game.eliminated),
+    overtimePenalties: game.overtimePenalties?.slice(),
   };
 }
 
 function classicEndReason(game) {
   if (game.mode !== 'classic' || game.gameOver) return null;
-  if (game.racks.some(rackIsEmpty)) return 'empty_rack';
-  if (game.racks.length && !game.racks.some(rackHasPlayableWord)) return 'no_valid_words';
+  const racks = game.racks.filter((_, index) => !game.eliminated?.[index]);
+  if (racks.some(rackIsEmpty)) return 'empty_rack';
+  if (racks.length && !racks.some(rack => rackHasPlayableWord(rack, game.dictionaryMode))) return 'no_valid_words';
   return null;
 }
 
@@ -499,6 +564,9 @@ function createGame(settings, playerCount) {
   const mode = settings.mode;
   const game = {
     mode,
+    dictionaryMode: settings.dictionaryMode === 'scrabble' ? 'scrabble' : 'full',
+    clock: null,
+    matchId: crypto.randomUUID(),
     numPlayers: playerCount,
     startingHP: settings.startingHP,
     distribution: null,
@@ -506,6 +574,10 @@ function createGame(settings, playerCount) {
     bag: [],
     racks: [],
     scores: new Array(playerCount).fill(0),
+    eliminated: new Array(playerCount).fill(false),
+    overtimePenalties: new Array(playerCount).fill(0),
+    previews: Array.from({length: playerCount}, emptyPreview),
+    rackVersions: new Array(playerCount).fill(0),
     words: new Array(playerCount).fill(0),
     health: new Array(playerCount).fill(settings.startingHP),
     currentPlayer: 0,
@@ -542,6 +614,8 @@ function createGame(settings, playerCount) {
     game.racks.push(rack);
     game.newlyDrawn[i] = refillRack(game, rack);
   }
+  if (settings.timedMode) game.clock = GameClock.create(clampInteger(settings.timeLimitSeconds, 30, 10800, 1200), playerCount, Date.now(),
+    clampInteger(settings.incrementSeconds, 0, 3600, 20), mode === 'classic' ? clampInteger(settings.overtimeSeconds, 0, 10800, 600) : 0);
   return game;
 }
 
@@ -564,14 +638,12 @@ function clearNewlyDrawn(game) {
 
 function finishClassic(game, reason, room = null) {
   if (game.mode !== 'classic' || game.gameOver) return false;
+  GameClock.pause(game.clock);
   game.gameOver = true;
   game.endResult = computeClassicEndResult(game, reason);
 
   if (room && game.endResult?.finalScores?.length) {
-    let winnerIdx = 0;
-    for (let i = 1; i < game.endResult.finalScores.length; i++) {
-      if (game.endResult.finalScores[i] > game.endResult.finalScores[winnerIdx]) winnerIdx = i;
-    }
+    const winnerIdx = game.endResult.winnerIndices[0];
     const winner = room.players[winnerIdx];
     if (winner) addSystemMessage(room, `Game Over. ${winner.username} won!`, 'classic_game_over', { winnerId: winner.id });
   }
@@ -583,9 +655,68 @@ function finishClassicIfNeeded(game, room = null) {
   return reason ? finishClassic(game, reason, room) : false;
 }
 
-function advanceTurn(game) {
-  game.currentPlayer = (game.currentPlayer + 1) % game.numPlayers;
+function finishOnTime(room, loserIdx, now = Date.now(), notify = true) {
+  const game = room.game;
+  if (!game || game.gameOver) return false;
+  GameClock.pause(game.clock, now);
+  game.eliminated[loserIdx] = true;
+  resetPreview(game, loserIdx, true);
+  if (game.mode === 'classic' && game.numPlayers > 2) {
+    game.bag.push(...game.racks[loserIdx].filter(Boolean));
+    shuffleArr(game.bag);
+    game.racks[loserIdx] = new Array(RACK_SIZE).fill(null);
+    clearNewlyDrawn(game);
+    game.consecutiveSkips = 0;
+    game.lastPlay = { player: loserIdx, type: 'eliminated' };
+    game.history.push(game.lastPlay);
+    addSystemMessage(room, `${room.players[loserIdx].username} used up their time and was eliminated. Their tiles return to the bag.`, 'eliminated', { loserId: room.players[loserIdx].id });
+    if (GameClock.eligiblePlayers(game.scores, game.eliminated).length > 1) {
+      advanceTurn(game, now);
+      if (!finishClassicIfNeeded(game, room)) addTurnMessage(room);
+    } else {
+      game.gameOver = true;
+      game.endResult = GameClock.timeoutResult(game.scores, loserIdx, game.eliminated, GameClock.penalties(game.clock));
+    }
+  } else {
+    game.gameOver = true;
+    game.endResult = GameClock.timeoutResult(game.scores, loserIdx, game.eliminated,
+      game.mode === 'classic' ? GameClock.penalties(game.clock) : []);
+  }
+  if (game.gameOver) {
+    GameClock.pause(game.clock, now);
+    game.overtimePenalties = game.endResult.overtimePenalties;
+    if (game.endResult.reason === 'timeout') addSystemMessage(room, `${room.players[game.endResult.winnerIdx].username} wins on time.`, 'timeout', { loserId: room.players[loserIdx].id });
+  }
+  if (roomHasDisconnectedPlayers(room)) GameClock.pause(game.clock, now);
+  game.revision++;
+  if (notify) broadcastRoom(room);
+  return true;
+}
+
+function updateRoomClock(room, now = Date.now(), notify = true) {
+  const game = room.game;
+  if (!game?.clock) return false;
+  if (room.phase !== 'game' || game.gameOver) { GameClock.pause(game.clock, now); return false; }
+  const expired = GameClock.settle(game.clock, now);
+  if (expired !== null) return finishOnTime(room, expired, now, notify);
+  if (roomHasDisconnectedPlayers(room)) GameClock.pause(game.clock, now);
+  else if (game.clock.activePlayer === null) GameClock.start(game.clock, game.currentPlayer, now);
+  return false;
+}
+
+function stopTurnClock(room, now = Date.now()) {
+  const expired = GameClock.completeTurn(room.game.clock, now);
+  return expired !== null ? finishOnTime(room, expired, now) : false;
+}
+
+function tickClocks(now = Date.now()) {
+  for (const room of rooms.values()) updateRoomClock(room, now);
+}
+
+function advanceTurn(game, now = Date.now()) {
+  game.currentPlayer = GameClock.nextPlayer(game.currentPlayer, game.numPlayers, game.eliminated);
   game.discardUsedThisTurn = false;
+  GameClock.start(game.clock, game.currentPlayer, now);
 }
 
 function requireGameTurn(ws) {
@@ -596,12 +727,15 @@ function requireGameTurn(ws) {
     sendError(ws, 'There is no match in progress.');
     return null;
   }
+  updateRoomClock(room);
+  if (memberIsSpectator(room, player)) { sendError(ws, 'Spectators cannot play.'); return null; }
   const playerIndex = room.players.findIndex(candidate => candidate.id === player.id);
   if (playerIndex < 0) return null;
   if (room.game.gameOver) {
     sendError(ws, 'The match is already over.');
     return null;
   }
+  if (room.game.eliminated[playerIndex]) { sendError(ws, 'You have been eliminated.'); return null; }
   if (roomHasDisconnectedPlayers(room)) {
     sendError(ws, 'Waiting for all players to reconnect.');
     return null;
@@ -625,8 +759,15 @@ function playWord(ws, msg) {
   if (tiles.some(tile => !tile)) return sendError(ws, 'One of those rack tiles is no longer available.');
 
   const word = tiles.map(tile => tile.letter).join('');
-  const resolved = resolveWord(word);
-  if (!resolved) return sendError(ws, 'That is not a valid word.');
+  const validation = getWordValidation(word, game.dictionaryMode);
+  if (validation.status !== 'valid') {
+    const code = validation.reason === 'not-scrabble' ? 'WORD_NOT_SCRABBLE'
+      : validation.reason.startsWith('rejected') ? 'WORD_REJECTED' : 'WORD_UNLISTED';
+    return sendError(ws, invalidWordMessage(validation), code);
+  }
+  const resolved = validation.resolved;
+  if (stopTurnClock(room)) return;
+  resetPreview(game, playerIndex, true);
 
   clearNewlyDrawn(game);
   const score = calcWordScore(game.mode, tiles);
@@ -726,6 +867,7 @@ function discardTiles(ws, msg) {
   if (discarded.some(tile => !tile)) return sendError(ws, 'One of those rack tiles is no longer available.');
 
   clearNewlyDrawn(game);
+  resetPreview(game, playerIndex, true);
   if (game.mode === 'classic') {
     game.bag.push(...discarded);
     shuffleArr(game.bag);
@@ -747,11 +889,13 @@ function skipTurn(ws) {
   const { room, playerIndex, game } = turn;
   const rack = game.racks[playerIndex];
   const classicBagEmpty = game.mode === 'classic' && game.bag.length === 0;
-  if (!classicBagEmpty && rackHasPlayableWord(rack)) {
+  if (!classicBagEmpty && rackHasPlayableWord(rack, game.dictionaryMode)) {
     return sendError(ws, 'You still have at least one valid word to play.');
   }
 
+  if (stopTurnClock(room)) return;
   clearNewlyDrawn(game);
+  resetPreview(game, playerIndex);
   game.lastPlay = { player: playerIndex, type: 'skip' };
   game.history.push(game.lastPlay);
   addSystemMessage(room, `${room.players[playerIndex].username} skipped their turn.`, 'skip', {
@@ -760,7 +904,7 @@ function skipTurn(ws) {
 
   if (game.mode === 'classic') game.consecutiveSkips += 1;
 
-  if (game.mode === 'classic' && game.consecutiveSkips >= game.numPlayers) {
+  if (game.mode === 'classic' && game.consecutiveSkips >= GameClock.eligiblePlayers(game.scores, game.eliminated).length) {
     // A full uninterrupted lap of skips ends Classic, even if one or more
     // players technically still had a playable word once the bag was empty.
     finishClassic(game, 'all_skipped', room);
@@ -815,6 +959,9 @@ function publicRoomState(room) {
       username: player.username,
       connected: playerIsConnected(player),
     })),
+    spectators: (room.spectators || []).map(member => ({
+      id: member.id, username: member.username, connected: playerIsConnected(member),
+    })),
     settings: { ...room.settings },
     chat: chat.map(message => ({
       id: message.id,
@@ -829,12 +976,12 @@ function publicRoomState(room) {
   };
 }
 
-function publicGameStateFor(room, viewerIndex) {
+function publicGameStateFor(room, viewerIndex, { spectator = false, viewPlayerIndex = viewerIndex } = {}) {
   const game = room.game;
   if (!game) return null;
-  const viewerRack = game.racks[viewerIndex] || new Array(RACK_SIZE).fill(null);
+  const viewerRack = game.racks[viewPlayerIndex] || new Array(RACK_SIZE).fill(null);
   const pausedForDisconnect = roomHasDisconnectedPlayers(room);
-  const viewerTurn = viewerIndex === game.currentPlayer && !game.gameOver;
+  const viewerTurn = viewPlayerIndex === game.currentPlayer && !game.gameOver;
   const canDiscard = viewerTurn
     && !pausedForDisconnect
     && !game.discardUsedThisTurn
@@ -842,14 +989,22 @@ function publicGameStateFor(room, viewerIndex) {
     && (game.mode === 'duel' || game.bag.length > 0);
   const canSkip = viewerTurn && !pausedForDisconnect && (
     (game.mode === 'classic' && game.bag.length === 0)
-    || !rackHasPlayableWord(viewerRack)
+    || !rackHasPlayableWord(viewerRack, game.dictionaryMode)
   );
 
   return {
     revision: game.revision,
+    matchId: game.matchId,
     mode: game.mode,
+    dictionaryMode: game.dictionaryMode,
+    clock: GameClock.snapshot(game.clock),
     currentPlayer: game.currentPlayer,
     yourPlayerIndex: viewerIndex,
+    isSpectator: spectator,
+    viewPlayerIndex,
+    rackVersion: game.rackVersions[viewPlayerIndex],
+    preview: structuredClone(game.gameOver ? emptyPreview() : game.previews[viewPlayerIndex] || emptyPreview()),
+    viewedPlayerTurn: viewerTurn,
     startingHP: game.startingHP,
     players: room.players.map((player, index) => ({
       id: player.id,
@@ -858,6 +1013,8 @@ function publicGameStateFor(room, viewerIndex) {
       score: game.scores[index],
       words: game.words[index],
       health: game.health[index],
+      eliminated: game.eliminated[index],
+      overtimePenalty: game.overtimePenalties[index],
     })),
     yourRack: viewerRack.map(tile => tile ? { letter: tile.letter, mod: tile.mod } : null),
     pausedForDisconnect,
@@ -867,30 +1024,84 @@ function publicGameStateFor(room, viewerIndex) {
     // Whether the current player already discarded is private turn state.
     // Other clients should only know that they themselves cannot act right now.
     discardUsedThisTurn: viewerTurn ? game.discardUsedThisTurn : false,
-    canDiscard,
-    canSkip,
+    canDiscard: !spectator && canDiscard,
+    canSkip: !spectator && canSkip,
+    viewCanDiscard: canDiscard,
+    viewCanSkip: canSkip,
     history: game.history,
     lastPlay: game.lastPlay,
-    newlyDrawnIndices: game.newlyDrawn[viewerIndex] || [],
+    newlyDrawnIndices: game.newlyDrawn[viewPlayerIndex] || [],
     gameOver: game.gameOver,
     endResult: game.endResult,
   };
 }
 
-function broadcastRoom(room) {
-  const publicState = publicRoomState(room);
-  room.players.forEach((player, index) => {
-    send(player.ws, {
-      type: 'room_state',
-      room: publicState,
-      game: room.phase === 'game' ? publicGameStateFor(room, index) : null,
-      you: { id: player.id, reconnectToken: player.reconnectToken },
-    });
+function spectatorViewIndex(room, member) {
+  const game = room.game;
+  const preferred = room.players.findIndex(player => player.id === member.watchingPlayerId);
+  if (preferred >= 0 && !game.eliminated[preferred]) return preferred;
+  member.watchingPlayerId = null;
+  return game.gameOver ? (game.endResult?.winnerIdx ?? game.endResult?.winnerIndices?.[0] ?? game.currentPlayer) : game.currentPlayer;
+}
+
+function sendRoomState(room, member, publicState = publicRoomState(room)) {
+  const spectator = memberIsSpectator(room, member);
+  const index = room.players.indexOf(member);
+  const viewPlayerIndex = room.game && spectator ? spectatorViewIndex(room, member) : index;
+  send(member.ws, {
+    type: 'room_state', room: publicState,
+    game: room.phase === 'game' ? publicGameStateFor(room, index, {spectator, viewPlayerIndex}) : null,
+    you: {id: member.id, reconnectToken: member.reconnectToken, role: spectator ? 'spectator' : 'player', watchingPlayerId: member.watchingPlayerId || null},
   });
 }
 
+function broadcastRoom(room) {
+  updateRoomClock(room, Date.now(), false);
+  const publicState = publicRoomState(room);
+  roomMembers(room).forEach(member => sendRoomState(room, member, publicState));
+}
+
+function watchPlayer(ws, msg) {
+  const membership = requireMembership(ws);
+  if (!membership) return;
+  const {room, player} = membership;
+  if (room.phase !== 'game' || !room.game || !memberIsSpectator(room, player)) return sendError(ws, 'Only spectators can choose a player to watch.');
+  const id = msg.playerId;
+  if (id !== null && id !== '' && (typeof id !== 'string' || !room.players.some((candidate, index) => candidate.id === id && !room.game.eliminated[index]))) {
+    return sendError(ws, 'Choose a player still in the game.');
+  }
+  player.watchingPlayerId = id || null;
+  sendRoomState(room, player);
+}
+
+function updatePreview(ws, msg) {
+  const membership = currentMembership(ws);
+  if (!membership) return;
+  const {room, player} = membership;
+  const game = room.game;
+  if (room.phase !== 'game' || !game || game.gameOver || memberIsSpectator(room, player)) return;
+  const index = room.players.indexOf(player);
+  if (msg.matchId !== game.matchId || msg.rackVersion !== game.rackVersions[index]) return;
+  function indices(value, limit = RACK_SIZE) {
+    if (!Array.isArray(value) || value.length > limit) return null;
+    if (value.some(i => !Number.isInteger(i) || i < 0 || i >= RACK_SIZE || !game.racks[index][i]) || new Set(value).size !== value.length) return null;
+    return value.slice();
+  }
+  const selection = indices(msg.selection), discardSelection = indices(msg.discardSelection, 4);
+  if (!selection || !discardSelection || typeof msg.discardMode !== 'boolean') return;
+  const discardMode = msg.discardMode && game.currentPlayer === index && !game.discardUsedThisTurn
+    && !roomHasDisconnectedPlayers(room) && (game.mode === 'duel' || game.bag.length > 0);
+  const preview = {selection: discardMode ? [] : selection, discardMode, discardSelection: discardMode ? discardSelection : []};
+  game.previews[index] = preview;
+  // Share private interaction only with authorized spectators watching this rack.
+  for (const member of roomMembers(room)) {
+    if (!memberIsSpectator(room, member) || spectatorViewIndex(room, member) !== index) continue;
+    send(member.ws, {type: 'player_preview', matchId: game.matchId, viewPlayerIndex: index, rackVersion: game.rackVersions[index], preview});
+  }
+}
+
 function broadcastChatMessage(room, message) {
-  room.players.forEach(player => {
+  roomMembers(room).forEach(player => {
     send(player.ws, {
       type: 'chat_message',
       message: {
@@ -940,28 +1151,29 @@ function removeSocketFromRoom(ws, { acknowledge = false } = {}) {
     return;
   }
 
-  const leavingIndex = room.players.findIndex(player => player.id === playerId && player.ws === ws);
-  const leavingPlayer = leavingIndex >= 0 ? room.players[leavingIndex] : null;
-  const leavingWasHost = !!leavingPlayer && leavingPlayer.id === room.hostId;
+  updateRoomClock(room, Date.now(), false);
+  const leavingPlayer = roomMembers(room).find(player => player.id === playerId && player.ws === ws);
+  const leavingWasHost = leavingPlayer?.id === room.hostId;
   if (leavingPlayer) {
-    addSystemMessage(room, `${leavingPlayer.username} left.`, 'leave', { actorId: leavingPlayer.id });
-    room.players.splice(leavingIndex, 1);
+    addSystemMessage(room, `${leavingPlayer.username} left.`, 'leave', {actorId: leavingPlayer.id});
+    const spectator = memberIsSpectator(room, leavingPlayer);
+    if (leavingPlayer.spectator) {
+      room.spectators = room.spectators.filter(player => player !== leavingPlayer);
+    } else if (spectator && room.phase === 'game') {
+      // Keep the eliminated seat's index for scores/history until this game ends.
+      leavingPlayer.left = true; leavingPlayer.ws = null; leavingPlayer.reconnectToken = null;
+    } else {
+      room.players = room.players.filter(player => player !== leavingPlayer);
+      if (room.phase === 'game') resetLobby(room);
+    }
   }
-
-  // An explicit leave during a match forfeits that seat. Returning the remaining
-  // players to the lobby avoids re-indexing live racks/scores around a missing player.
-  if (leavingPlayer && room.phase === 'game') {
-    room.phase = 'lobby';
-    room.game = null;
-  }
-
-  if (room.players.length === 0) {
-    rooms.delete(code);
-  } else {
+  const members = roomMembers(room);
+  if (!members.length) rooms.delete(code);
+  else {
     refreshRoomDisconnectExpiry(room);
     let newHost = null;
-    if (!room.players.some(player => player.id === room.hostId)) {
-      newHost = room.players.find(playerIsConnected) || room.players[0];
+    if (!members.some(player => player.id === room.hostId)) {
+      newHost = members.find(playerIsConnected) || members[0];
       room.hostId = newHost.id;
     }
     if (room.settings.mode === 'classic' && room.settings.playerCount < room.players.length) {
@@ -983,7 +1195,7 @@ function disconnectSocketFromRoom(ws) {
 
   const room = rooms.get(code);
   if (!room) return;
-  const player = room.players.find(candidate => candidate.id === playerId && candidate.ws === ws);
+  const player = roomMembers(room).find(candidate => candidate.id === playerId && candidate.ws === ws);
   if (!player) return;
 
   player.ws = null;
@@ -993,15 +1205,17 @@ function disconnectSocketFromRoom(ws) {
   broadcastRoom(room);
 }
 
-function attachPlayer(ws, room, username, makeHost = false) {
+function attachPlayer(ws, room, username, makeHost = false, spectator = false) {
   const player = {
     id: crypto.randomUUID(),
     username,
     ws,
     reconnectToken: newReconnectToken(),
     disconnectedAt: null,
+    spectator, watchingPlayerId: null,
   };
-  room.players.push(player);
+  if (spectator) (room.spectators ||= []).push(player);
+  else room.players.push(player);
   room.allDisconnectedAt = null;
   if (makeHost) room.hostId = player.id;
   ws.roomCode = room.code;
@@ -1023,7 +1237,7 @@ function resumeRoom(ws, msg) {
   const room = rooms.get(code);
   if (!room) return sendError(ws, 'That room no longer exists.', 'resume_failed');
 
-  const player = room.players.find(candidate => candidate.id === playerId);
+  const player = roomMembers(room).find(candidate => candidate.id === playerId);
   if (!player || !reconnectTokenMatches(player, token)) {
     return sendError(ws, 'Could not restore that room session.', 'resume_failed');
   }
@@ -1054,7 +1268,7 @@ function currentMembership(ws) {
   if (!ws.roomCode || !ws.playerId) return null;
   const room = rooms.get(ws.roomCode);
   if (!room) return null;
-  const player = room.players.find(candidate => candidate.id === ws.playerId && candidate.ws === ws);
+  const player = roomMembers(room).find(candidate => candidate.id === ws.playerId && candidate.ws === ws);
   return player ? { room, player } : null;
 }
 
@@ -1085,6 +1299,7 @@ function createRoom(ws, msg) {
     phase: 'lobby',
     hostId: null,
     players: [],
+    spectators: [],
     settings: defaultSettings(),
     createdAt: Date.now(),
     allDisconnectedAt: null,
@@ -1105,15 +1320,17 @@ function joinRoom(ws, msg) {
 
   const room = rooms.get(code);
   if (!room) return sendError(ws, 'That room does not exist.');
-  if (room.phase !== 'lobby') return sendError(ws, 'That match has already started.');
-  if (room.players.length >= roomCapacity(room)) return sendError(ws, 'That room is full.');
-  if (room.players.some(player => player.username.toLocaleLowerCase() === username.toLocaleLowerCase())) {
+  if (msg.role !== undefined && !['player', 'spectator'].includes(msg.role)) return sendError(ws, 'Choose player or spectator.');
+  const spectator = msg.role === 'spectator';
+  if (!spectator && room.phase !== 'lobby') return sendError(ws, 'That match has already started. You can join as a spectator.');
+  if (!spectator && room.players.length >= roomCapacity(room)) return sendError(ws, 'That room is full.');
+  if (roomMembers(room).some(player => player.username.toLocaleLowerCase() === username.toLocaleLowerCase())) {
     return sendError(ws, 'That username is already being used in this room.');
   }
 
   removeSocketFromRoom(ws);
-  const player = attachPlayer(ws, room, username, false);
-  addSystemMessage(room, `${username} joined.`, 'join', { actorId: player.id });
+  const player = attachPlayer(ws, room, username, false, spectator);
+  addSystemMessage(room, spectator ? `${username} joined as a spectator.` : `${username} joined.`, 'join', { actorId: player.id });
   broadcastRoom(room);
 }
 
@@ -1121,10 +1338,11 @@ function updateSettings(ws, msg) {
   const membership = requireHost(ws);
   if (!membership) return;
   const { room } = membership;
-  if (room.phase !== 'lobby') return sendError(ws, 'Room rules are locked after the match starts.');
-
   const patch = msg.settings && typeof msg.settings === 'object' ? msg.settings : {};
+  if (room.phase !== 'lobby' && Object.keys(patch).some(key => key !== 'spectatorChatEnabled')) return sendError(ws, 'Room rules are locked after the match starts.');
+  if (Object.hasOwn(patch, 'spectatorChatEnabled') && typeof patch.spectatorChatEnabled !== 'boolean') return sendError(ws, 'Invalid spectator chat setting.');
   const next = { ...room.settings };
+  if (Object.hasOwn(patch, 'spectatorChatEnabled')) next.spectatorChatEnabled = patch.spectatorChatEnabled;
 
   if (Object.hasOwn(patch, 'mode')) {
     const mode = patch.mode === 'duel' ? 'duel' : patch.mode === 'classic' ? 'classic' : null;
@@ -1142,6 +1360,19 @@ function updateSettings(ws, msg) {
       next.bagSize = DEFAULT_BAG_BY_PLAYERS[count];
     }
   }
+
+  if (Object.hasOwn(patch, 'dictionaryMode')) {
+    if (!['full', 'scrabble'].includes(patch.dictionaryMode)) return sendError(ws, 'Invalid dictionary choice.');
+    next.dictionaryMode = patch.dictionaryMode;
+  }
+
+  if (Object.hasOwn(patch, 'timedMode')) {
+    if (typeof patch.timedMode !== 'boolean') return sendError(ws, 'Invalid timed-mode setting.');
+    next.timedMode = patch.timedMode;
+  }
+  if (Object.hasOwn(patch, 'incrementSeconds')) next.incrementSeconds = clampInteger(patch.incrementSeconds, 0, 3600, 20);
+  if (Object.hasOwn(patch, 'timeLimitSeconds')) next.timeLimitSeconds = clampInteger(patch.timeLimitSeconds, 30, 10800, 1200);
+  if (Object.hasOwn(patch, 'overtimeSeconds')) next.overtimeSeconds = clampInteger(patch.overtimeSeconds, 0, 10800, 600);
 
   if (Object.hasOwn(patch, 'bagSize')) next.bagSize = clampInteger(patch.bagSize, 0, 2000, next.bagSize);
   if (Object.hasOwn(patch, 'minPerLetter')) next.minPerLetter = clampInteger(patch.minPerLetter, 0, 50, next.minPerLetter);
@@ -1177,8 +1408,7 @@ function returnToLobby(ws) {
   if (!membership) return;
   const { room } = membership;
   if (room.phase !== 'game' || !room.game?.gameOver) return sendError(ws, 'You can return to the lobby after the match ends.');
-  room.phase = 'lobby';
-  room.game = null;
+  resetLobby(room);
   addSystemMessage(room, `${membership.player.username} returned the room to the lobby.`, 'return_lobby', { actorId: membership.player.id });
   broadcastRoom(room);
 }
@@ -1189,8 +1419,7 @@ function endGameEarly(ws) {
   const { room } = membership;
   if (room.phase !== 'game' || !room.game) return sendError(ws, 'There is no game in progress.');
   if (room.game.gameOver) return sendError(ws, 'That game is already over.');
-  room.phase = 'lobby';
-  room.game = null;
+  resetLobby(room);
   addSystemMessage(room, `${membership.player.username} ended the game early.`, 'end_game', { actorId: membership.player.id });
   broadcastRoom(room);
 }
@@ -1201,7 +1430,7 @@ function closeRoom(ws) {
   const { room } = membership;
   if (room.phase !== 'lobby') return sendError(ws, 'End the current game before closing the room.');
 
-  const players = room.players.slice();
+  const players = roomMembers(room);
   rooms.delete(room.code);
   for (const player of players) {
     if (!player.ws) continue;
@@ -1215,6 +1444,7 @@ function sendChatMessage(ws, msg) {
   const membership = requireMembership(ws);
   if (!membership) return;
   const { room, player } = membership;
+  if (memberIsSpectator(room, player) && room.settings.spectatorChatEnabled === false) return sendError(ws, 'The host disabled spectator chat.');
   const text = cleanChatMessage(msg.text);
   if (!text) return sendError(ws, 'Chat message cannot be empty.');
 
@@ -1229,6 +1459,7 @@ function sendChatMessage(ws, msg) {
     username: player.username,
     text,
     kind: 'chat',
+    meta: {spectator: memberIsSpectator(room, player)},
   });
   // Preserve the timestamp captured for rate limiting as closely as possible.
   message.timestamp = now;
@@ -1251,6 +1482,8 @@ function handleMessage(ws, raw) {
     case 'resume_room': return resumeRoom(ws, msg);
     case 'update_settings': return updateSettings(ws, msg);
     case 'start_game': return startGame(ws);
+    case 'watch_player': return watchPlayer(ws, msg);
+    case 'update_preview': return updatePreview(ws, msg);
     case 'play_word': return playWord(ws, msg);
     case 'discard_tiles': return discardTiles(ws, msg);
     case 'skip_turn': return skipTurn(ws);
@@ -1268,6 +1501,7 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.gz': 'application/gzip',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -1326,6 +1560,8 @@ function startServer() {
 
   // Keep long-lived room connections healthy and discard dead sockets promptly.
   // WebSocket clients automatically answer protocol-level ping frames with pong.
+  const clockTicker = setInterval(() => tickClocks(), 100);
+  clockTicker.unref?.();
   const roomCleanup = setInterval(() => cleanupExpiredRooms(), ROOM_CLEANUP_INTERVAL_MS);
   roomCleanup.unref?.();
 
@@ -1343,6 +1579,7 @@ function startServer() {
   wss.on('close', () => {
     clearInterval(heartbeat);
     clearInterval(roomCleanup);
+    clearInterval(clockTicker);
   });
 
   server.listen(PORT, HOST, () => {
@@ -1357,6 +1594,7 @@ module.exports = {
   createGame,
   calcWordScore,
   resolveWord,
+  getWordValidation,
   rackHasPlayableWord,
   duelRewardForLength,
   duelRewardForBaseDamage,
@@ -1372,5 +1610,7 @@ module.exports = {
   startServer,
   _handleMessage: handleMessage,
   _rooms: rooms,
+  _tickClocks: tickClocks,
+  _updateRoomClock: updateRoomClock,
   _roomDisconnectedTtlMs: ROOM_DISCONNECTED_TTL_MS,
 };
