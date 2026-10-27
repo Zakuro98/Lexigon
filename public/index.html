@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Lexigon</title>
+<link rel="icon" href="./favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1774,6 +1777,10 @@
             <button class="seg-btn" type="button" data-count="4">4</button>
           </div>
         </div>
+        <div class="lobby-setting-row">
+          <label for="lobbyFirstPlayer">First player</label>
+          <select id="lobbyFirstPlayer"><option value="random">Random</option></select>
+        </div>
         <div class="lobby-setting-row lobby-classic-setting">
           <label for="lobbyBagSize">Bag size</label>
           <input type="number" id="lobbyBagSize" min="0" max="2000" step="1" value="160">
@@ -1865,6 +1872,10 @@
           <button class="seg-btn" type="button" data-count="3" role="radio" aria-checked="false">3</button>
           <button class="seg-btn" type="button" data-count="4" role="radio" aria-checked="false">4</button>
         </div>
+      </div>
+      <div class="control control-first-player">
+        <label for="firstPlayer">First player</label>
+        <select id="firstPlayer"><option value="random">Random</option></select>
       </div>
       <div class="control control-timed-mode">
         <label>Timed mode</label>
@@ -2473,6 +2484,7 @@
     duelHealth: document.getElementById('duelHealth'),
     modeGroup: document.getElementById('modeGroup'),
     playerCountGroup: document.getElementById('playerCountGroup'),
+    firstPlayer: document.getElementById('firstPlayer'),
     stats: document.getElementById('stats'),
     scoreboard: document.getElementById('scoreboard'),
     tileGrid: document.getElementById('tileGrid'),
@@ -2565,6 +2577,7 @@
     lobbyModeGroup: document.getElementById('lobbyModeGroup'),
     lobbyPlayerCountGroup: document.getElementById('lobbyPlayerCountGroup'),
     lobbyPlayerCountRow: document.getElementById('lobbyPlayerCountRow'),
+    lobbyFirstPlayer: document.getElementById('lobbyFirstPlayer'),
     lobbyBagSize: document.getElementById('lobbyBagSize'),
     lobbyMinPerLetter: document.getElementById('lobbyMinPerLetter'),
     lobbyStartingHP: document.getElementById('lobbyStartingHP'),
@@ -3970,6 +3983,10 @@
       btn.classList.toggle('active', count === settings.playerCount);
       btn.disabled = !host || settings.mode === 'duel';
     });
+    els.lobbyFirstPlayer.innerHTML = '<option value="random">Random</option>' + room.players.map(player =>
+      `<option value="${escapeHTML(player.id)}">${escapeHTML(player.username)}</option>`).join('');
+    els.lobbyFirstPlayer.value = settings.firstPlayer || 'random';
+    els.lobbyFirstPlayer.disabled = !host;
 
     els.lobbyWordListGroup.querySelectorAll('.seg-btn').forEach(button => {
       const active = button.dataset.dictionary === (settings.dictionaryMode || 'full');
@@ -4123,6 +4140,10 @@
 
   function setNumPlayers(n) {
     numPlayers = n;
+    const firstPlayer = els.firstPlayer.value;
+    els.firstPlayer.innerHTML = '<option value="random">Random</option>' + Array.from({length: n}, (_, index) =>
+      `<option value="${index}">Player ${index + 1}</option>`).join('');
+    els.firstPlayer.value = firstPlayer !== 'random' && Number(firstPlayer) < n ? firstPlayer : 'random';
     els.playerCountGroup.querySelectorAll('.seg-btn').forEach(btn => {
       const count = Number(btn.dataset.count);
       const active = count === n;
@@ -4299,7 +4320,8 @@
     discardSelection = [];
     discardUsedThisTurn = false;
     consecutiveSkips = 0;
-    currentPlayer = 0;
+    const selectedFirstPlayer = els.firstPlayer.value;
+    currentPlayer = selectedFirstPlayer === 'random' ? Math.floor(Math.random() * numPlayers) : Number(selectedFirstPlayer);
     concealed = false;
     endingTurn = false;
     if (turnTimer) { clearTimeout(turnTimer); turnTimer = null; }
@@ -4354,10 +4376,11 @@
 
     newlyDrawnIndices = new Set();
     for (let i = 0; i < RACK_SIZE; i++) {
-      if (playerRacks[0][i] !== null) newlyDrawnIndices.add(i);
+      if (playerRacks[currentPlayer][i] !== null) newlyDrawnIndices.add(i);
     }
 
     localClock = timedModeEnabled ? GameClock.create(readClockSeconds(els.timeLimitMinutes), numPlayers, Date.now(), readIncrementSeconds(els.incrementSeconds), gameMode === 'classic' ? readOvertimeSeconds(els.overtimeMinutes) : 0) : null;
+    if (localClock) localClock.activePlayer = currentPlayer;
     renderScoreboard();
     renderTiles();
     renderDist();
@@ -5605,6 +5628,7 @@
     updateLobbySettings({ playerCount: Number(btn.dataset.count) });
   });
   els.lobbyBagSize.addEventListener('change', () => updateLobbySettings({ bagSize: Number(els.lobbyBagSize.value) }));
+  els.lobbyFirstPlayer.addEventListener('change', () => updateLobbySettings({ firstPlayer: els.lobbyFirstPlayer.value }));
   els.lobbyMinPerLetter.addEventListener('change', () => updateLobbySettings({ minPerLetter: Number(els.lobbyMinPerLetter.value) }));
   els.lobbyStartingHP.addEventListener('change', () => updateLobbySettings({ startingHP: Number(els.lobbyStartingHP.value) }));
   els.startOnlineGameBtn.addEventListener('click', () => sendOnline({ type: 'start_game' }));

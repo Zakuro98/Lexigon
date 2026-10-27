@@ -128,7 +128,7 @@ function randomRoomCode(length = 4) {
 }
 
 function defaultSettings() {
-  return { mode: 'classic', dictionaryMode: 'full', timedMode: false, timeLimitSeconds: 1200, incrementSeconds: 20, overtimeSeconds: 600, spectatorChatEnabled: true, playerCount: 2, bagSize: 160, minPerLetter: 1, startingHP: 200 };
+  return { mode: 'classic', dictionaryMode: 'full', timedMode: false, timeLimitSeconds: 1200, incrementSeconds: 20, overtimeSeconds: 600, spectatorChatEnabled: true, playerCount: 2, firstPlayer: 'random', bagSize: 160, minPerLetter: 1, startingHP: 200 };
 }
 
 function roomMembers(room) {
@@ -150,6 +150,7 @@ function resetLobby(room) {
   room.phase = 'lobby';
   room.game = null;
   room.players = room.players.filter(player => !player.left);
+  if (!room.players.some(player => player.id === room.settings.firstPlayer)) room.settings.firstPlayer = 'random';
 }
 
 function roomCapacity(room) {
@@ -614,8 +615,13 @@ function createGame(settings, playerCount) {
     game.racks.push(rack);
     game.newlyDrawn[i] = refillRack(game, rack);
   }
-  if (settings.timedMode) game.clock = GameClock.create(clampInteger(settings.timeLimitSeconds, 30, 10800, 1200), playerCount, Date.now(),
-    clampInteger(settings.incrementSeconds, 0, 3600, 20), mode === 'classic' ? clampInteger(settings.overtimeSeconds, 0, 10800, 600) : 0);
+  game.currentPlayer = Number.isInteger(settings.firstPlayer) && settings.firstPlayer >= 0 && settings.firstPlayer < playerCount
+    ? settings.firstPlayer : crypto.randomInt(playerCount);
+  if (settings.timedMode) {
+    game.clock = GameClock.create(clampInteger(settings.timeLimitSeconds, 30, 10800, 1200), playerCount, Date.now(),
+      clampInteger(settings.incrementSeconds, 0, 3600, 20), mode === 'classic' ? clampInteger(settings.overtimeSeconds, 0, 10800, 600) : 0);
+    game.clock.activePlayer = game.currentPlayer;
+  }
   return game;
 }
 
@@ -1155,6 +1161,7 @@ function removeSocketFromRoom(ws, { acknowledge = false } = {}) {
   const leavingPlayer = roomMembers(room).find(player => player.id === playerId && player.ws === ws);
   const leavingWasHost = leavingPlayer?.id === room.hostId;
   if (leavingPlayer) {
+    if (room.settings.firstPlayer === leavingPlayer.id) room.settings.firstPlayer = 'random';
     addSystemMessage(room, `${leavingPlayer.username} left.`, 'leave', {actorId: leavingPlayer.id});
     const spectator = memberIsSpectator(room, leavingPlayer);
     if (leavingPlayer.spectator) {
@@ -1366,6 +1373,13 @@ function updateSettings(ws, msg) {
     next.dictionaryMode = patch.dictionaryMode;
   }
 
+  if (Object.hasOwn(patch, 'firstPlayer')) {
+    if (patch.firstPlayer !== 'random' && !room.players.some(player => player.id === patch.firstPlayer)) {
+      return sendError(ws, 'Choose a player in this room or Random.');
+    }
+    next.firstPlayer = patch.firstPlayer;
+  }
+
   if (Object.hasOwn(patch, 'timedMode')) {
     if (typeof patch.timedMode !== 'boolean') return sendError(ws, 'Invalid timed-mode setting.');
     next.timedMode = patch.timedMode;
@@ -1393,7 +1407,8 @@ function startGame(ws) {
   if (roomHasDisconnectedPlayers(room)) return sendError(ws, 'Everyone must be connected before the match can start.');
 
   try {
-    room.game = createGame(room.settings, room.players.length);
+    const firstPlayer = room.players.findIndex(player => player.id === room.settings.firstPlayer);
+    room.game = createGame({ ...room.settings, firstPlayer: firstPlayer >= 0 ? firstPlayer : 'random' }, room.players.length);
   } catch (error) {
     return sendError(ws, error.message || 'Could not start that game.');
   }
